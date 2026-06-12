@@ -1,0 +1,2149 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type ProdutoRaw = Record<string, unknown>;
+
+type ProdutoView = {
+  id: string;
+  codigo: string;
+  nome: string;
+  categoria: string;
+  tipo: string;
+  preco: number;
+  ativo: boolean;
+  porQuilo: boolean;
+  controlaEstoque: boolean;
+  estoque: number;
+  raw: ProdutoRaw;
+};
+
+type CartItem = {
+  id: string;
+  produtoId: string;
+  codigo: string;
+  nome: string;
+  categoria: string;
+  tipo: string;
+  precoUnitario: number;
+  quantidade: number;
+  total: number;
+  porQuilo: boolean;
+  unidade: "un" | "kg";
+};
+
+type FormaPagamento = "Dinheiro" | "PIX" | "Débito" | "Crédito";
+
+type PesoModal = {
+  produto: ProdutoView;
+  peso: string;
+};
+
+type CaixaAtual = {
+  id: string;
+  data: string;
+  operador: string;
+  valorAbertura: number;
+  status: "Aberto" | "Fechado";
+  abertoEm: string;
+  fechadoEm?: string;
+};
+
+type AtendimentoAtual = {
+  tipo: "Balcão" | "Mesa" | "Comanda";
+  mesaId?: string;
+  mesaNumero?: number;
+  comandaId?: string;
+  comandaNome?: string;
+  documento?: string;
+  cliente?: string;
+  pessoas?: number;
+  iniciadoEm: string;
+};
+
+type MesaConsumo = {
+  id: string;
+  mesaId: string;
+  mesaNumero: number;
+  cliente: string;
+  pessoas: number;
+  status: "Aberto" | "Pago";
+  itens: CartItem[];
+  total: number;
+  criadoEm: string;
+  atualizadoEm: string;
+};
+
+type ComandaConsumo = {
+  id: string;
+  comandaId: string;
+  comandaNome: string;
+  documento: string;
+  cliente: string;
+  status: "Aberto" | "Pago";
+  itens: CartItem[];
+  total: number;
+  criadoEm: string;
+  atualizadoEm: string;
+};
+
+const LS_PRODUTOS = "gestor-restaurante-produtos";
+const LS_ENTRADAS = "gestor-restaurante-entradas";
+const LS_VENDAS_DETALHADAS = "gestor-restaurante-vendas-detalhadas";
+const LS_TAXAS_MAQUININHAS = "gestor-restaurante-taxas-maquininhas";
+
+const LS_CAIXA_ATUAL = "gestor-restaurante-caixa-atual";
+const LS_CAIXAS = "gestor-restaurante-caixas";
+const LS_CAIXAS_HISTORICO = "gestor-restaurante-caixas-historico";
+const LS_ATENDIMENTO_ATUAL = "gestor-restaurante-pdv-atendimento-atual";
+const LS_MESA_CONSUMOS = "gestor-restaurante-mesa-consumos";
+const LS_COMANDA_CONSUMOS = "gestor-restaurante-comanda-consumos";
+const LS_MESAS = "gestor-restaurante-mesas";
+const LS_COMANDAS = "gestor-restaurante-comandas";
+
+const CATEGORIAS_PADRAO = [
+  "Almoço",
+  "Janta",
+  "Bebida",
+  "Pizza",
+  "Porções",
+  "Outros",
+];
+
+function uid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function safeJsonArray<T = unknown>(value: string | null): T[] {
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeJsonObject<T = unknown>(value: string | null): T | null {
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function asString(value: unknown, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+function asNumber(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    let cleaned = value
+      .replace("R$", "")
+      .replace(/\s/g, "")
+      .replace(/[^\d,.-]/g, "");
+
+    if (cleaned.includes(",") && cleaned.includes(".")) {
+      cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+    } else if (cleaned.includes(",")) {
+      cleaned = cleaned.replace(",", ".");
+    }
+
+    const number = Number(cleaned);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  return 0;
+}
+
+function money(value: number) {
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function todayInputDate() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return date.toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
+  const nome =
+    asString(raw.nome) ||
+    asString(raw.item) ||
+    asString(raw.descricao) ||
+    `Produto ${index + 1}`;
+
+  const codigo =
+    asString(raw.codigo) ||
+    asString(raw.cod) ||
+    asString(raw.id) ||
+    String(index + 1);
+
+  const categoria =
+    asString(raw.categoriaPrincipal) ||
+    asString(raw.categoria) ||
+    asString(raw.grupo) ||
+    "Outros";
+
+  const tipo =
+    asString(raw.tipo) ||
+    asString(raw.subcategoria) ||
+    asString(raw.unidade) ||
+    "";
+
+  const preco =
+    asNumber(raw.valor) ||
+    asNumber(raw.preco) ||
+    asNumber(raw.precoVenda) ||
+    asNumber(raw.price) ||
+    0;
+
+  const estoque = asNumber(raw.estoque);
+  const ativoRaw = raw.ativo;
+  const status = normalizeText(asString(raw.status));
+
+  const ativo =
+    ativoRaw === false || status === "inativo" || status === "desativado"
+      ? false
+      : true;
+
+  const tipoPreco = normalizeText(asString(raw.tipoPreco));
+  const unidade = normalizeText(asString(raw.unidade));
+  const tipoNormalizado = normalizeText(tipo);
+
+  const porQuilo =
+    raw.porQuilo === true ||
+    raw.precoPorQuilo === true ||
+    tipoPreco.includes("quilo") ||
+    tipoPreco.includes("kg") ||
+    unidade.includes("kg") ||
+    tipoNormalizado.includes("quilo") ||
+    tipoNormalizado.includes("kg");
+
+  const controlaEstoque =
+    raw.controlaEstoque === true ||
+    raw.temEstoque === true ||
+    raw.baixarEstoque === true;
+
+  return {
+    id: asString(raw.id) || `${codigo}-${nome}-${index}`,
+    codigo,
+    nome,
+    categoria,
+    tipo,
+    preco,
+    ativo,
+    porQuilo,
+    controlaEstoque,
+    estoque,
+    raw,
+  };
+}
+
+function calcularTotalItem(item: CartItem) {
+  return Number((item.precoUnitario * item.quantidade).toFixed(2));
+}
+
+function getTaxaMaquininha(
+  formaPagamento: FormaPagamento,
+  taxas: ProdutoRaw[]
+) {
+  if (formaPagamento === "Dinheiro" || formaPagamento === "PIX") return 0;
+
+  const alvo =
+    formaPagamento === "Crédito"
+      ? ["credito", "crédito"]
+      : ["debito", "débito"];
+
+  for (const taxa of taxas) {
+    const texto = normalizeText(Object.values(taxa).join(" "));
+
+    const encontrouForma = alvo.some((palavra) => texto.includes(palavra));
+
+    if (encontrouForma) {
+      return (
+        asNumber(taxa.percentual) ||
+        asNumber(taxa.taxa) ||
+        asNumber(taxa.valor) ||
+        asNumber(taxa.porcentagem) ||
+        0
+      );
+    }
+  }
+
+  return 0;
+}
+
+export default function PdvPage() {
+  const [produtos, setProdutos] = useState<ProdutoView[]>([]);
+  const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
+
+  const [categoriaSelecionada, setCategoriaSelecionada] = useState("");
+  const [busca, setBusca] = useState("");
+  const [carrinho, setCarrinho] = useState<CartItem[]>([]);
+
+  const [cliente, setCliente] = useState("");
+  const [mostrarPagamento, setMostrarPagamento] = useState(false);
+  const [formaPagamento, setFormaPagamento] =
+    useState<FormaPagamento>("Dinheiro");
+  const [valorRecebido, setValorRecebido] = useState("");
+
+  const [pesoModal, setPesoModal] = useState<PesoModal | null>(null);
+
+  const [caixaAtual, setCaixaAtual] = useState<CaixaAtual | null>(null);
+  const [mostrarAberturaCaixa, setMostrarAberturaCaixa] = useState(false);
+  const [operadorCaixa, setOperadorCaixa] = useState("Adm");
+  const [valorAbertura, setValorAbertura] = useState("");
+
+  const [atendimentoAtual, setAtendimentoAtual] =
+    useState<AtendimentoAtual | null>(null);
+
+  useEffect(() => {
+    const produtosStorage = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_PRODUTOS)
+    );
+
+    const produtosMapeados = produtosStorage
+      .map((produto, index) => getProdutoView(produto, index))
+      .filter((produto) => produto.ativo);
+
+    setProdutos(produtosMapeados);
+
+    const taxasStorage = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_TAXAS_MAQUININHAS)
+    );
+
+    setTaxasMaquininhas(taxasStorage);
+
+    const caixaSalvo = safeJsonObject<CaixaAtual>(
+      localStorage.getItem(LS_CAIXA_ATUAL)
+    );
+
+    if (caixaSalvo?.status === "Aberto") {
+      setCaixaAtual(caixaSalvo);
+      setOperadorCaixa(caixaSalvo.operador || "Adm");
+    }
+
+    const atendimentoSalvo = safeJsonObject<AtendimentoAtual>(
+      localStorage.getItem(LS_ATENDIMENTO_ATUAL)
+    );
+
+    if (atendimentoSalvo) {
+      setAtendimentoAtual(atendimentoSalvo);
+
+      if (atendimentoSalvo.cliente) {
+        setCliente(atendimentoSalvo.cliente);
+      }
+
+      if (atendimentoSalvo.tipo === "Mesa" && atendimentoSalvo.mesaId) {
+        const consumosMesa = safeJsonArray<MesaConsumo>(
+          localStorage.getItem(LS_MESA_CONSUMOS)
+        );
+
+        const consumoAberto = consumosMesa.find(
+          (consumo) =>
+            consumo.mesaId === atendimentoSalvo.mesaId &&
+            consumo.status === "Aberto"
+        );
+
+        if (consumoAberto?.itens?.length) {
+          setCarrinho(consumoAberto.itens);
+        }
+      }
+
+      if (atendimentoSalvo.tipo === "Comanda" && atendimentoSalvo.comandaId) {
+        const consumosComanda = safeJsonArray<ComandaConsumo>(
+          localStorage.getItem(LS_COMANDA_CONSUMOS)
+        );
+
+        const consumoAberto = consumosComanda.find(
+          (consumo) =>
+            consumo.comandaId === atendimentoSalvo.comandaId &&
+            consumo.status === "Aberto"
+        );
+
+        if (consumoAberto?.itens?.length) {
+          setCarrinho(consumoAberto.itens);
+        }
+      }
+    }
+  }, []);
+
+  const caixaAberto = caixaAtual?.status === "Aberto";
+
+  const categorias = useMemo(() => {
+    const lista = produtos
+      .map((produto) => produto.categoria)
+      .filter(Boolean)
+      .map((categoria) => categoria.trim());
+
+    const unicas = Array.from(new Set(lista));
+
+    if (unicas.length === 0) return CATEGORIAS_PADRAO;
+
+    return unicas;
+  }, [produtos]);
+
+  useEffect(() => {
+    if (!categoriaSelecionada && categorias.length > 0) {
+      setCategoriaSelecionada(categorias[0]);
+    }
+  }, [categorias, categoriaSelecionada]);
+
+  const produtosFiltrados = useMemo(() => {
+    const buscaNormalizada = normalizeText(busca);
+
+    return produtos.filter((produto) => {
+      const categoriaProduto = normalizeText(produto.categoria);
+      const tipoProduto = normalizeText(produto.tipo);
+      const categoriaAtual = normalizeText(categoriaSelecionada);
+
+      const bateCategoria =
+        !categoriaSelecionada ||
+        categoriaProduto === categoriaAtual ||
+        tipoProduto === categoriaAtual ||
+        (categoriaAtual.includes("bebida") &&
+          (categoriaProduto.includes("bebida") ||
+            tipoProduto.includes("bebida")));
+
+      const textoProduto = normalizeText(
+        `${produto.nome} ${produto.codigo} ${produto.categoria} ${produto.tipo}`
+      );
+
+      const bateBusca =
+        !buscaNormalizada || textoProduto.includes(buscaNormalizada);
+
+      return bateCategoria && bateBusca;
+    });
+  }, [produtos, categoriaSelecionada, busca]);
+
+  const totalItens = useMemo(() => {
+    return carrinho.reduce((total, item) => total + item.quantidade, 0);
+  }, [carrinho]);
+
+  const totalBruto = useMemo(() => {
+    return carrinho.reduce((total, item) => total + item.total, 0);
+  }, [carrinho]);
+
+  const taxaPercentual = useMemo(() => {
+    return getTaxaMaquininha(formaPagamento, taxasMaquininhas);
+  }, [formaPagamento, taxasMaquininhas]);
+
+  const valorTaxa = useMemo(() => {
+    return Number(((totalBruto * taxaPercentual) / 100).toFixed(2));
+  }, [totalBruto, taxaPercentual]);
+
+  const valorLiquido = useMemo(() => {
+    return Number((totalBruto - valorTaxa).toFixed(2));
+  }, [totalBruto, valorTaxa]);
+
+  const troco = useMemo(() => {
+    if (formaPagamento !== "Dinheiro") return 0;
+
+    const recebido = asNumber(valorRecebido);
+    const diferenca = recebido - totalBruto;
+
+    return diferenca > 0 ? diferenca : 0;
+  }, [formaPagamento, valorRecebido, totalBruto]);
+
+  const tipoAtendimento = atendimentoAtual?.tipo || "Balcão";
+
+  const consumidorVenda =
+    atendimentoAtual?.tipo === "Mesa"
+      ? `Mesa ${atendimentoAtual.mesaNumero} - ${
+          cliente || atendimentoAtual.cliente || "Não identificado"
+        }`
+      : atendimentoAtual?.tipo === "Comanda"
+      ? `Comanda ${atendimentoAtual.comandaNome || ""} - ${
+          cliente || atendimentoAtual.cliente || "Não identificado"
+        }`
+      : cliente || "Não identificado";
+
+  function registrarEventoCaixa(evento: ProdutoRaw) {
+    const historicoAtual = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_CAIXAS_HISTORICO)
+    );
+
+    localStorage.setItem(
+      LS_CAIXAS_HISTORICO,
+      JSON.stringify([evento, ...historicoAtual])
+    );
+
+    const vendasAtuais = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_VENDAS_DETALHADAS)
+    );
+
+    localStorage.setItem(
+      LS_VENDAS_DETALHADAS,
+      JSON.stringify([evento, ...vendasAtuais])
+    );
+  }
+
+  function abrirCaixa() {
+    const operador = operadorCaixa.trim();
+    const valor = asNumber(valorAbertura);
+
+    if (!operador) {
+      alert("Informe o operador do caixa.");
+      return;
+    }
+
+    if (valor < 0) {
+      alert("O valor de abertura não pode ser negativo.");
+      return;
+    }
+
+    const agora = new Date();
+
+    const novoCaixa: CaixaAtual = {
+      id: uid(),
+      data: todayInputDate(),
+      operador,
+      valorAbertura: valor,
+      status: "Aberto",
+      abertoEm: agora.toISOString(),
+    };
+
+    localStorage.setItem(LS_CAIXA_ATUAL, JSON.stringify(novoCaixa));
+
+    const caixasAtuais = safeJsonArray<CaixaAtual>(
+      localStorage.getItem(LS_CAIXAS)
+    );
+
+    localStorage.setItem(LS_CAIXAS, JSON.stringify([novoCaixa, ...caixasAtuais]));
+
+    const eventoAbertura = {
+      id: uid(),
+      caixaId: novoCaixa.id,
+      data: todayInputDate(),
+      dataHora: agora.toISOString(),
+      operador,
+      tipoVenda: "Caixa",
+      status: "Abertura",
+      tipoDocumento: "Evento de caixa",
+      consumidor: "Abertura de caixa",
+      formaPagamento: "Dinheiro",
+      valorBruto: valor,
+      valorLiquido: valor,
+      valor,
+      observacao: "Abertura de caixa",
+    };
+
+    registrarEventoCaixa(eventoAbertura);
+
+    setCaixaAtual(novoCaixa);
+    setMostrarAberturaCaixa(false);
+    setValorAbertura("");
+
+    alert("Caixa aberto com sucesso.");
+  }
+
+  function adicionarProduto(produto: ProdutoView) {
+    if (produto.controlaEstoque && produto.estoque <= 0) {
+      alert("Este produto está sem estoque.");
+      return;
+    }
+
+    if (produto.porQuilo) {
+      setPesoModal({
+        produto,
+        peso: "",
+      });
+      return;
+    }
+
+    setCarrinho((atual) => {
+      const existe = atual.find(
+        (item) => item.produtoId === produto.id && !item.porQuilo
+      );
+
+      if (existe) {
+        return atual.map((item) => {
+          if (item.id !== existe.id) return item;
+
+          const atualizado = {
+            ...item,
+            quantidade: item.quantidade + 1,
+          };
+
+          return {
+            ...atualizado,
+            total: calcularTotalItem(atualizado),
+          };
+        });
+      }
+
+      const novoItem: CartItem = {
+        id: uid(),
+        produtoId: produto.id,
+        codigo: produto.codigo,
+        nome: produto.nome,
+        categoria: produto.categoria,
+        tipo: produto.tipo,
+        precoUnitario: produto.preco,
+        quantidade: 1,
+        total: produto.preco,
+        porQuilo: false,
+        unidade: "un",
+      };
+
+      return [...atual, novoItem];
+    });
+  }
+
+  function confirmarPeso() {
+    if (!pesoModal) return;
+
+    const peso = asNumber(pesoModal.peso);
+
+    if (peso <= 0) {
+      alert("Informe um peso válido.");
+      return;
+    }
+
+    const novoItem: CartItem = {
+      id: uid(),
+      produtoId: pesoModal.produto.id,
+      codigo: pesoModal.produto.codigo,
+      nome: pesoModal.produto.nome,
+      categoria: pesoModal.produto.categoria,
+      tipo: pesoModal.produto.tipo,
+      precoUnitario: pesoModal.produto.preco,
+      quantidade: peso,
+      total: Number((pesoModal.produto.preco * peso).toFixed(2)),
+      porQuilo: true,
+      unidade: "kg",
+    };
+
+    setCarrinho((atual) => [...atual, novoItem]);
+    setPesoModal(null);
+  }
+
+  function aumentarItem(itemId: string) {
+    setCarrinho((atual) =>
+      atual.map((item) => {
+        if (item.id !== itemId) return item;
+
+        const atualizado = {
+          ...item,
+          quantidade: item.porQuilo
+            ? Number((item.quantidade + 0.1).toFixed(3))
+            : item.quantidade + 1,
+        };
+
+        return {
+          ...atualizado,
+          total: calcularTotalItem(atualizado),
+        };
+      })
+    );
+  }
+
+  function diminuirItem(itemId: string) {
+    setCarrinho((atual) =>
+      atual
+        .map((item) => {
+          if (item.id !== itemId) return item;
+
+          const novaQuantidade = item.porQuilo
+            ? Number((item.quantidade - 0.1).toFixed(3))
+            : item.quantidade - 1;
+
+          const atualizado = {
+            ...item,
+            quantidade: novaQuantidade,
+          };
+
+          return {
+            ...atualizado,
+            total: calcularTotalItem(atualizado),
+          };
+        })
+        .filter((item) => item.quantidade > 0)
+    );
+  }
+
+  function removerItem(itemId: string) {
+    setCarrinho((atual) => atual.filter((item) => item.id !== itemId));
+  }
+
+  function limparVenda() {
+    if (carrinho.length === 0) return;
+
+    const confirmar = confirm("Deseja limpar todos os itens desta venda?");
+
+    if (!confirmar) return;
+
+    setCarrinho([]);
+    setValorRecebido("");
+
+    if (!atendimentoAtual) {
+      setCliente("");
+    }
+  }
+
+  function removerVinculoAtendimento() {
+    const confirmar = confirm("Deseja remover o vínculo com esta mesa?");
+
+    if (!confirmar) return;
+
+    localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
+    setAtendimentoAtual(null);
+    setCliente("");
+  }
+
+  function abrirPagamento() {
+    if (carrinho.length === 0) {
+      alert("Adicione pelo menos um item antes de pagar.");
+      return;
+    }
+
+    if (!caixaAberto) {
+      setMostrarAberturaCaixa(true);
+      return;
+    }
+
+    setMostrarPagamento(true);
+  }
+
+  function baixarEstoqueDosProdutos() {
+    const produtosOriginais = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_PRODUTOS)
+    );
+
+    if (produtosOriginais.length === 0) return;
+
+    const atualizados = produtosOriginais.map((produtoRaw, index) => {
+      const produtoView = getProdutoView(produtoRaw, index);
+
+      const itensVendidos = carrinho.filter(
+        (item) => item.produtoId === produtoView.id
+      );
+
+      if (itensVendidos.length === 0) return produtoRaw;
+
+      const deveBaixar =
+        produtoRaw.controlaEstoque === true ||
+        produtoRaw.temEstoque === true ||
+        produtoRaw.baixarEstoque === true;
+
+      if (!deveBaixar) return produtoRaw;
+
+      const quantidadeVendida = itensVendidos.reduce(
+        (total, item) => total + item.quantidade,
+        0
+      );
+
+      const estoqueAtual = asNumber(produtoRaw.estoque);
+      const novoEstoque = Math.max(estoqueAtual - quantidadeVendida, 0);
+
+      return {
+        ...produtoRaw,
+        estoque: novoEstoque,
+      };
+    });
+
+    localStorage.setItem(LS_PRODUTOS, JSON.stringify(atualizados));
+
+    const produtosMapeados = atualizados
+      .map((produto, index) => getProdutoView(produto, index))
+      .filter((produto) => produto.ativo);
+
+    setProdutos(produtosMapeados);
+  }
+
+  function lancarNaMesa() {
+    if (!atendimentoAtual || atendimentoAtual.tipo === "Balcão") {
+      alert("Este atendimento não está vinculado a mesa ou comanda.");
+      return;
+    }
+
+    if (carrinho.length === 0) {
+      alert("Adicione pelo menos um item antes de lançar o consumo.");
+      return;
+    }
+
+    const agora = new Date();
+
+    if (atendimentoAtual.tipo === "Mesa") {
+      if (!atendimentoAtual.mesaId || !atendimentoAtual.mesaNumero) {
+        alert("Dados da mesa não encontrados.");
+        return;
+      }
+
+      const consumosAtuais = safeJsonArray<MesaConsumo>(
+        localStorage.getItem(LS_MESA_CONSUMOS)
+      );
+
+      const consumosSemEstaMesa = consumosAtuais.filter(
+        (consumo) =>
+          !(
+            consumo.mesaId === atendimentoAtual.mesaId &&
+            consumo.status === "Aberto"
+          )
+      );
+
+      const consumoExistente = consumosAtuais.find(
+        (consumo) =>
+          consumo.mesaId === atendimentoAtual.mesaId &&
+          consumo.status === "Aberto"
+      );
+
+      const novoConsumo: MesaConsumo = {
+        id: consumoExistente?.id || uid(),
+        mesaId: atendimentoAtual.mesaId,
+        mesaNumero: atendimentoAtual.mesaNumero,
+        cliente: cliente || atendimentoAtual.cliente || "Não identificado",
+        pessoas: atendimentoAtual.pessoas || 1,
+        status: "Aberto",
+        itens: carrinho,
+        total: totalBruto,
+        criadoEm: consumoExistente?.criadoEm || agora.toISOString(),
+        atualizadoEm: agora.toISOString(),
+      };
+
+      localStorage.setItem(
+        LS_MESA_CONSUMOS,
+        JSON.stringify([novoConsumo, ...consumosSemEstaMesa])
+      );
+
+      alert(`Consumo lançado na mesa ${atendimentoAtual.mesaNumero}.`);
+      window.location.href = "/pdv/mesa";
+      return;
+    }
+
+    if (atendimentoAtual.tipo === "Comanda") {
+      if (!atendimentoAtual.comandaId) {
+        alert("Dados da comanda não encontrados.");
+        return;
+      }
+
+      const consumosAtuais = safeJsonArray<ComandaConsumo>(
+        localStorage.getItem(LS_COMANDA_CONSUMOS)
+      );
+
+      const consumosSemEstaComanda = consumosAtuais.filter(
+        (consumo) =>
+          !(
+            consumo.comandaId === atendimentoAtual.comandaId &&
+            consumo.status === "Aberto"
+          )
+      );
+
+      const consumoExistente = consumosAtuais.find(
+        (consumo) =>
+          consumo.comandaId === atendimentoAtual.comandaId &&
+          consumo.status === "Aberto"
+      );
+
+      const novoConsumo: ComandaConsumo = {
+        id: consumoExistente?.id || uid(),
+        comandaId: atendimentoAtual.comandaId,
+        comandaNome: atendimentoAtual.comandaNome || cliente || "Comanda",
+        documento: atendimentoAtual.documento || "",
+        cliente: cliente || atendimentoAtual.cliente || "Não identificado",
+        status: "Aberto",
+        itens: carrinho,
+        total: totalBruto,
+        criadoEm: consumoExistente?.criadoEm || agora.toISOString(),
+        atualizadoEm: agora.toISOString(),
+      };
+
+      localStorage.setItem(
+        LS_COMANDA_CONSUMOS,
+        JSON.stringify([novoConsumo, ...consumosSemEstaComanda])
+      );
+
+      alert(`Consumo lançado na comanda ${novoConsumo.comandaNome}.`);
+      window.location.href = "/pdv/comanda";
+    }
+  }
+
+  function removerConsumoDepoisDoPagamento() {
+    if (!atendimentoAtual || atendimentoAtual.tipo === "Balcão") {
+      return;
+    }
+
+    if (atendimentoAtual.tipo === "Mesa") {
+      if (!atendimentoAtual.mesaId) return;
+
+      const consumosAtuais = safeJsonArray<MesaConsumo>(
+        localStorage.getItem(LS_MESA_CONSUMOS)
+      );
+
+      const consumosAtualizados = consumosAtuais.filter(
+        (consumo) =>
+          !(
+            consumo.mesaId === atendimentoAtual.mesaId &&
+            consumo.status === "Aberto"
+          )
+      );
+
+      localStorage.setItem(LS_MESA_CONSUMOS, JSON.stringify(consumosAtualizados));
+
+      const mesasAtuais = safeJsonArray<Record<string, unknown>>(
+        localStorage.getItem(LS_MESAS)
+      );
+
+      const mesasAtualizadas = mesasAtuais.map((mesa) => {
+        if (String(mesa.id) !== String(atendimentoAtual.mesaId)) {
+          return mesa;
+        }
+
+        return {
+          ...mesa,
+          status: "Livre",
+          cliente: "",
+          pessoas: 0,
+          abertaEm: "",
+          observacao: "",
+        };
+      });
+
+      localStorage.setItem(LS_MESAS, JSON.stringify(mesasAtualizadas));
+      return;
+    }
+
+    if (atendimentoAtual.tipo === "Comanda") {
+      if (!atendimentoAtual.comandaId) return;
+
+      const consumosAtuais = safeJsonArray<ComandaConsumo>(
+        localStorage.getItem(LS_COMANDA_CONSUMOS)
+      );
+
+      const consumosAtualizados = consumosAtuais.filter(
+        (consumo) =>
+          !(
+            consumo.comandaId === atendimentoAtual.comandaId &&
+            consumo.status === "Aberto"
+          )
+      );
+
+      localStorage.setItem(
+        LS_COMANDA_CONSUMOS,
+        JSON.stringify(consumosAtualizados)
+      );
+
+      const comandasAtuais = safeJsonArray<Record<string, unknown>>(
+        localStorage.getItem(LS_COMANDAS)
+      );
+
+      const comandasAtualizadas = comandasAtuais.filter(
+        (comanda) => String(comanda.id) !== String(atendimentoAtual.comandaId)
+      );
+
+      localStorage.setItem(LS_COMANDAS, JSON.stringify(comandasAtualizadas));
+    }
+  }
+
+  function finalizarVenda() {
+    if (!caixaAtual || caixaAtual.status !== "Aberto") {
+      alert("Abra o caixa antes de finalizar a venda.");
+      setMostrarPagamento(false);
+      setMostrarAberturaCaixa(true);
+      return;
+    }
+
+    if (carrinho.length === 0) {
+      alert("Adicione pelo menos um item antes de finalizar.");
+      return;
+    }
+
+    if (formaPagamento === "Dinheiro") {
+      const recebido = asNumber(valorRecebido);
+
+      if (recebido < totalBruto) {
+        alert("O valor recebido em dinheiro é menor que o total da venda.");
+        return;
+      }
+    }
+
+    const vendaId = uid();
+    const agora = new Date();
+
+    const descricaoItens = carrinho
+      .map((item) => `${item.quantidade} ${item.unidade} - ${item.nome}`)
+      .join(" | ");
+
+    const entradasAtuais = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_ENTRADAS)
+    );
+
+    const novaEntrada = {
+      id: vendaId,
+      caixaId: caixaAtual.id,
+      atendimentoTipo: tipoAtendimento,
+      mesaId: atendimentoAtual?.mesaId || "",
+      mesaNumero: atendimentoAtual?.mesaNumero || "",
+      comandaId: atendimentoAtual?.comandaId || "",
+      comandaNome: atendimentoAtual?.comandaNome || "",
+      data: todayInputDate(),
+      categoria:
+        tipoAtendimento === "Mesa"
+          ? "Venda Mesa"
+          : tipoAtendimento === "Comanda"
+          ? "Venda Comanda"
+          : "Venda PDV",
+      descricao:
+        tipoAtendimento === "Mesa"
+          ? `Venda Mesa ${atendimentoAtual?.mesaNumero} - ${descricaoItens}`
+          : tipoAtendimento === "Comanda"
+          ? `Venda Comanda ${atendimentoAtual?.comandaNome || ""} - ${descricaoItens}`
+          : `Venda PDV - ${descricaoItens}`,
+      formaRecebimento: formaPagamento,
+      forma: formaPagamento,
+      valorBruto: totalBruto,
+      taxaPercentual,
+      taxaDescontada: valorTaxa,
+      valorLiquido,
+      valor: valorLiquido,
+      origem: "PDV",
+      cliente: consumidorVenda,
+      operador: caixaAtual.operador,
+      criadoEm: agora.toISOString(),
+    };
+
+    localStorage.setItem(
+      LS_ENTRADAS,
+      JSON.stringify([novaEntrada, ...entradasAtuais])
+    );
+
+    const vendasAtuais = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_VENDAS_DETALHADAS)
+    );
+
+    const novaVendaDetalhada = {
+      id: vendaId,
+      caixaId: caixaAtual.id,
+      atendimentoTipo: tipoAtendimento,
+      mesaId: atendimentoAtual?.mesaId || "",
+      mesaNumero: atendimentoAtual?.mesaNumero || "",
+      comandaId: atendimentoAtual?.comandaId || "",
+      comandaNome: atendimentoAtual?.comandaNome || "",
+      data: todayInputDate(),
+      dataHora: agora.toISOString(),
+      operador: caixaAtual.operador,
+      tipoVenda: tipoAtendimento,
+      status: "Finalizado",
+      tipoDocumento: "Gerencial",
+      consumidor: consumidorVenda,
+      formaPagamento,
+      totalItens,
+      valorBruto: totalBruto,
+      taxaPercentual,
+      taxaDescontada: valorTaxa,
+      valorLiquido,
+      valor: valorLiquido,
+      itens: carrinho,
+    };
+
+    localStorage.setItem(
+      LS_VENDAS_DETALHADAS,
+      JSON.stringify([novaVendaDetalhada, ...vendasAtuais])
+    );
+
+    baixarEstoqueDosProdutos();
+    removerConsumoDepoisDoPagamento();
+
+    setCarrinho([]);
+    setCliente("");
+    setValorRecebido("");
+    setFormaPagamento("Dinheiro");
+    setMostrarPagamento(false);
+
+    localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
+    setAtendimentoAtual(null);
+
+    alert("Venda finalizada com sucesso.");
+  }
+
+
+  function gerarHtmlContaAtual() {
+    const agora = new Date();
+
+    const identificacaoAtendimento =
+      atendimentoAtual?.tipo === "Mesa"
+        ? `Mesa nº ${atendimentoAtual.mesaNumero}`
+        : atendimentoAtual?.tipo === "Comanda"
+        ? `Comanda ${atendimentoAtual.comandaNome || ""}`
+        : "Balcão";
+
+    const itensHtml = carrinho
+      .map((item) => {
+        const quantidade = item.porQuilo
+          ? `${item.quantidade.toFixed(3)} kg`
+          : `${item.quantidade} un`;
+
+        return `
+          <tr>
+            <td>
+              <strong>${escapeHtml(item.nome)}</strong>
+              <small>${escapeHtml(quantidade)} x ${money(item.precoUnitario)}</small>
+            </td>
+            <td class="right">${money(item.total)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Conta</title>
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              width: 80mm;
+              margin: 0;
+              padding: 10px;
+              font-family: Arial, sans-serif;
+              color: #000;
+              background: #fff;
+              font-size: 12px;
+            }
+            h1, h2, p { margin: 0; }
+            .center { text-align: center; }
+            .header {
+              border-bottom: 1px dashed #000;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+            }
+            .restaurant {
+              font-size: 16px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .cnpj {
+              margin-top: 3px;
+              font-size: 11px;
+              font-weight: 700;
+            }
+            .type {
+              margin-top: 6px;
+              font-size: 22px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .info {
+              border-bottom: 1px dashed #000;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+              line-height: 1.5;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+            td {
+              padding: 6px 0;
+              vertical-align: top;
+              border-bottom: 1px dashed #ccc;
+            }
+            small {
+              display: block;
+              margin-top: 2px;
+              font-size: 11px;
+            }
+            .right {
+              text-align: right;
+              white-space: nowrap;
+              font-weight: 900;
+            }
+            .total {
+              margin-top: 10px;
+              padding: 10px;
+              border: 2px solid #000;
+              text-align: center;
+            }
+            .total span {
+              display: block;
+              font-size: 12px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .total strong {
+              display: block;
+              margin-top: 4px;
+              font-size: 28px;
+              font-weight: 900;
+            }
+            .footer {
+              margin-top: 10px;
+              padding-top: 8px;
+              border-top: 1px dashed #000;
+              text-align: center;
+              font-size: 10px;
+            }
+            @media print {
+              body { width: 80mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header center">
+            <p class="restaurant">Samambaia Restaurante e Pizzaria</p>
+            <p class="cnpj">CNPJ: 44.824.459/0001-85</p>
+            <p class="type">${escapeHtml(identificacaoAtendimento)}</p>
+          </div>
+
+          <div class="info">
+            <p><strong>Data:</strong> ${escapeHtml(agora.toLocaleString("pt-BR"))}</p>
+            <p><strong>Cliente:</strong> ${escapeHtml(
+              cliente || atendimentoAtual?.cliente || "Não identificado"
+            )}</p>
+            <p><strong>Operador:</strong> ${escapeHtml(caixaAtual?.operador || "Adm")}</p>
+          </div>
+
+          <table>
+            <tbody>${itensHtml}</tbody>
+          </table>
+
+          <div class="total">
+            <span>Valor a cobrar</span>
+            <strong>${money(totalBruto)}</strong>
+          </div>
+
+          <div class="footer">
+            <p>Conferência de consumo</p>
+            <p>Não é documento fiscal</p>
+          </div>
+        </body>
+      </html>
+    `;
+  }
+
+  function gerarHtmlPedidoCozinhaAtual() {
+    const agora = new Date();
+
+    const identificacaoAtendimento =
+      atendimentoAtual?.tipo === "Mesa"
+        ? `Mesa nº ${atendimentoAtual.mesaNumero}`
+        : atendimentoAtual?.tipo === "Comanda"
+        ? `Comanda ${atendimentoAtual.comandaNome || ""}`
+        : "Balcão";
+
+    const itensHtml = carrinho
+      .map((item) => {
+        const quantidade = item.porQuilo
+          ? `${item.quantidade.toFixed(3)} kg`
+          : `${item.quantidade} un`;
+
+        return `
+          <tr>
+            <td class="qty">${escapeHtml(quantidade)}</td>
+            <td>
+              <strong>${escapeHtml(item.nome)}</strong>
+              <small>${escapeHtml(item.categoria || item.tipo || "")}</small>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    return `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Pedido cozinha</title>
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              width: 80mm;
+              margin: 0;
+              padding: 10px;
+              font-family: Arial, sans-serif;
+              color: #000;
+              background: #fff;
+              font-size: 13px;
+            }
+            h1, h2, p { margin: 0; }
+            .center { text-align: center; }
+            .header {
+              border-bottom: 2px dashed #000;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+            }
+            .restaurant {
+              font-size: 14px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .cnpj {
+              margin-top: 3px;
+              font-size: 10px;
+              font-weight: 700;
+            }
+            .type {
+              margin-top: 8px;
+              font-size: 26px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .place {
+              margin-top: 4px;
+              font-size: 22px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .info {
+              border-bottom: 1px dashed #000;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+              line-height: 1.5;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+            td {
+              padding: 8px 0;
+              vertical-align: top;
+              border-bottom: 1px dashed #999;
+            }
+            .qty {
+              width: 25mm;
+              font-size: 18px;
+              font-weight: 900;
+              white-space: nowrap;
+            }
+            strong {
+              display: block;
+              font-size: 17px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            small {
+              display: block;
+              margin-top: 2px;
+              font-size: 10px;
+            }
+            .footer {
+              margin-top: 10px;
+              padding-top: 8px;
+              border-top: 2px dashed #000;
+              text-align: center;
+              font-size: 11px;
+              font-weight: 900;
+            }
+            @media print {
+              body { width: 80mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header center">
+            <p class="restaurant">Samambaia Restaurante e Pizzaria</p>
+            <p class="cnpj">CNPJ: 44.824.459/0001-85</p>
+            <p class="type">Pedido cozinha</p>
+            <p class="place">${escapeHtml(identificacaoAtendimento)}</p>
+          </div>
+
+          <div class="info">
+            <p><strong>Data:</strong> ${escapeHtml(agora.toLocaleString("pt-BR"))}</p>
+            <p><strong>Cliente:</strong> ${escapeHtml(
+              cliente || atendimentoAtual?.cliente || "Não identificado"
+            )}</p>
+            <p><strong>Operador:</strong> ${escapeHtml(caixaAtual?.operador || "Adm")}</p>
+          </div>
+
+          <table>
+            <tbody>${itensHtml}</tbody>
+          </table>
+
+          <div class="footer">
+            <p>Pedido para produção</p>
+            <p>Sem valores para cozinha</p>
+          </div>
+        </body>
+      </html>
+    `;
+  }
+
+  function imprimirHtml(html: string) {
+    const janela = window.open("", "_blank", "width=420,height=700");
+
+    if (!janela) {
+      alert("Não foi possível abrir a janela de impressão.");
+      return;
+    }
+
+    janela.document.open();
+    janela.document.write(html);
+    janela.document.close();
+    janela.focus();
+
+    setTimeout(() => {
+      janela.print();
+      janela.close();
+    }, 300);
+  }
+
+  function imprimirContaAtual() {
+    if (carrinho.length === 0) {
+      alert("Adicione pelo menos um item antes de imprimir.");
+      return;
+    }
+
+    imprimirHtml(gerarHtmlContaAtual());
+  }
+
+  function imprimirPedidoCozinhaAtual() {
+    if (carrinho.length === 0) {
+      alert("Adicione pelo menos um item antes de imprimir o pedido da cozinha.");
+      return;
+    }
+
+    imprimirHtml(gerarHtmlPedidoCozinhaAtual());
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f7f3ee] text-[#1a1a1a]">
+      <div className="flex min-h-screen">
+        <aside className="w-[140px] shrink-0 bg-[#111111] text-white">
+          <div className="flex h-20 items-center gap-2 border-b border-white/10 px-3">
+            <img
+              src="/logo-01.png"
+              alt="Logo"
+              className="h-10 w-10 object-contain"
+            />
+            <div className="leading-tight">
+              <p className="text-[10px] uppercase tracking-wide text-white/70">
+                Usuário
+              </p>
+              <p className="text-base font-bold text-white">Adm</p>
+            </div>
+          </div>
+
+          <nav className="mt-3 space-y-1 px-2">
+            <a
+              href="/pdv"
+              className="flex w-full items-center gap-2 rounded-md bg-[#f97316] px-3 py-3 text-left text-sm font-bold text-white"
+            >
+              <span className="text-lg">🧾</span>
+              Balcão
+            </a>
+
+            <a
+              href="/pdv/comanda"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
+              <span className="text-lg">💳</span>
+              Comanda
+            </a>
+
+            <a
+              href="/pdv/mesa"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
+              <span className="text-lg">🍽️</span>
+              Mesa
+            </a>
+
+            <button className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm text-white/40">
+              <span className="text-lg">🛵</span>
+              Delivery
+            </button>
+
+            <a
+              href="/pdv/operacoes-caixa"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
+              <span className="text-lg">🏦</span>
+              Caixa
+            </a>
+
+            <a
+              href="/pdv/operacoes-caixa"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
+              <span className="text-lg">📋</span>
+              Operações
+            </a>
+
+            <button className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]">
+              <span className="text-lg">🤝</span>
+              Clientes
+            </button>
+
+            <a
+              href="/"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
+              <span className="text-lg">🔄</span>
+              Painel
+            </a>
+          </nav>
+        </aside>
+
+        <section className="flex min-h-screen flex-1">
+          <div className="flex-1 p-6">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#f1d2ba] bg-white px-4 py-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  {tipoAtendimento === "Mesa"
+                    ? "PDV Mesa"
+                    : tipoAtendimento === "Comanda"
+                    ? "PDV Comanda"
+                    : "PDV Balcão"}
+                </p>
+                <h1 className="text-xl font-black text-[#111111]">
+                  Samambaia Restaurante e Pizzaria
+                </h1>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {atendimentoAtual?.tipo === "Mesa" && (
+                  <div className="rounded-xl bg-[#111111] px-4 py-2 text-sm font-black text-[#f97316]">
+                    Mesa nº {atendimentoAtual.mesaNumero}
+                  </div>
+                )}
+
+                {atendimentoAtual?.tipo === "Comanda" && (
+                  <div className="rounded-xl bg-[#111111] px-4 py-2 text-sm font-black text-[#f97316]">
+                    Comanda {atendimentoAtual.comandaNome || cliente}
+                  </div>
+                )}
+
+                <div
+                  className={`rounded-xl px-4 py-2 text-sm font-black ${
+                    caixaAberto
+                      ? "bg-green-100 text-green-700"
+                      : "bg-red-100 text-red-700"
+                  }`}
+                >
+                  {caixaAberto ? "Caixa aberto" : "Caixa fechado"}
+                </div>
+
+                {caixaAberto ? (
+                  <div className="text-right text-xs font-semibold text-slate-600">
+                    <p>Operador: {caixaAtual?.operador}</p>
+                    <p>Abertura: {formatDateTime(caixaAtual?.abertoEm || "")}</p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setMostrarAberturaCaixa(true)}
+                    className="rounded-xl bg-[#f97316] px-5 py-3 text-sm font-black uppercase text-white hover:bg-[#ea580c]"
+                  >
+                    Abrir caixa
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
+                Categorias
+              </h2>
+              <div className="mt-2 h-1 w-20 rounded bg-[#f97316]" />
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+              {categorias.map((categoria) => {
+                const selecionada = categoria === categoriaSelecionada;
+
+                return (
+                  <button
+                    key={categoria}
+                    onClick={() => setCategoriaSelecionada(categoria)}
+                    className={`min-h-[64px] rounded-lg border-2 px-3 py-3 text-sm font-bold uppercase transition ${
+                      selecionada
+                        ? "border-[#f97316] bg-[#111111] text-[#f97316]"
+                        : "border-[#f1d2ba] bg-white text-[#222222] hover:border-[#f97316] hover:bg-[#fff4eb]"
+                    }`}
+                  >
+                    {categoria}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-6">
+              <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
+                Itens
+              </h2>
+              <div className="mt-2 h-1 w-14 rounded bg-[#f97316]" />
+            </div>
+
+            <div className="mt-4 flex max-w-[620px] overflow-hidden rounded-lg border-2 border-[#f1d2ba] bg-white">
+              <div className="flex w-12 items-center justify-center text-xl text-[#f97316]">
+                🔎
+              </div>
+              <input
+                value={busca}
+                onChange={(event) => setBusca(event.target.value)}
+                placeholder="Busca pelo nome do produto ou código"
+                className="h-12 flex-1 px-2 text-sm outline-none"
+              />
+              <button className="bg-[#f97316] px-5 text-sm font-bold text-white hover:bg-[#ea580c]">
+                Busca
+              </button>
+            </div>
+
+            {produtos.length === 0 ? (
+              <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
+                <h3 className="text-xl font-bold text-[#111111]">
+                  Nenhum produto encontrado
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Cadastre produtos em Produtos/Itens para eles aparecerem aqui
+                  no PDV.
+                </p>
+              </div>
+            ) : produtosFiltrados.length === 0 ? (
+              <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
+                <h3 className="text-xl font-bold text-[#111111]">
+                  Nenhum item nesta categoria
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Troque a categoria ou limpe a busca.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
+                {produtosFiltrados.map((produto) => {
+                  const semEstoque =
+                    produto.controlaEstoque && produto.estoque <= 0;
+
+                  return (
+                    <button
+                      key={produto.id}
+                      onClick={() => adicionarProduto(produto)}
+                      disabled={semEstoque}
+                      className={`min-h-[110px] rounded-xl border-2 px-3 py-4 text-center shadow-sm transition ${
+                        semEstoque
+                          ? "border-slate-200 bg-slate-100 text-slate-400"
+                          : "border-[#f1d2ba] bg-white hover:border-[#f97316] hover:bg-[#fff4eb]"
+                      }`}
+                    >
+                      <p className="text-[15px] font-extrabold uppercase leading-tight text-[#111111]">
+                        {produto.nome}
+                      </p>
+                      <p className="mt-2 text-xl font-black text-[#f97316]">
+                        {money(produto.preco)}
+                      </p>
+
+                      {produto.porQuilo && (
+                        <p className="mt-1 text-xs font-semibold text-slate-600">
+                          COBRADO POR KG
+                        </p>
+                      )}
+
+                      {produto.controlaEstoque && (
+                        <p className="mt-1 text-xs font-semibold text-slate-600">
+                          ESTOQUE: {produto.estoque}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <aside className="flex w-[360px] shrink-0 flex-col border-l-2 border-[#f1d2ba] bg-[#fffaf6] p-4">
+            <div className="rounded-xl border-2 border-[#f1d2ba] bg-white p-4 shadow-sm">
+              {atendimentoAtual && atendimentoAtual.tipo !== "Balcão" && (
+                <div className="mb-4 rounded-xl bg-[#111111] p-4 text-white">
+                  <p className="text-xs font-black uppercase text-white/60">
+                    Atendimento atual
+                  </p>
+
+                  <p className="mt-1 text-2xl font-black text-[#f97316]">
+                    {atendimentoAtual.tipo === "Mesa"
+                      ? `Mesa nº ${atendimentoAtual.mesaNumero}`
+                      : `Comanda ${atendimentoAtual.comandaNome || ""}`}
+                  </p>
+
+                  <p className="mt-1 text-sm font-bold">
+                    Cliente: {atendimentoAtual.cliente || "Não identificado"}
+                  </p>
+
+                  {atendimentoAtual.tipo === "Mesa" && (
+                    <p className="text-sm font-bold">
+                      Pessoas: {atendimentoAtual.pessoas || 0}
+                    </p>
+                  )}
+
+                  {atendimentoAtual.tipo === "Comanda" &&
+                    atendimentoAtual.documento && (
+                      <p className="text-sm font-bold">
+                        Documento: {atendimentoAtual.documento}
+                      </p>
+                    )}
+
+                  <button
+                    onClick={removerVinculoAtendimento}
+                    className="mt-3 w-full rounded-lg bg-red-600 py-2 text-xs font-black uppercase text-white"
+                  >
+                    Remover vínculo
+                  </button>
+                </div>
+              )}
+
+              <label className="text-xs font-extrabold uppercase tracking-wide text-[#111111]">
+                Cliente
+              </label>
+              <input
+                value={cliente}
+                onChange={(event) => setCliente(event.target.value)}
+                placeholder="Não identificado"
+                className="mt-2 h-11 w-full rounded-lg border border-[#e8d2c0] bg-[#fffaf6] px-3 text-sm outline-none"
+              />
+            </div>
+
+            <div className="mt-4 flex-1 overflow-y-auto">
+              {carrinho.length === 0 ? (
+                <div className="rounded-xl border border-[#f1d2ba] bg-white p-4 text-sm text-slate-500 shadow-sm">
+                  Nenhum item lançado.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {carrinho.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-[#f1d2ba] bg-white p-3 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-extrabold uppercase text-[#111111]">
+                            {item.nome}
+                          </p>
+                          <p className="text-xs font-medium text-slate-600">
+                            {item.porQuilo
+                              ? `${item.quantidade.toFixed(3)} kg x ${money(
+                                  item.precoUnitario
+                                )}`
+                              : `${item.quantidade} un x ${money(
+                                  item.precoUnitario
+                                )}`}
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => removerItem(item.id)}
+                          className="text-base font-black text-red-600"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => diminuirItem(item.id)}
+                            className="h-8 w-8 rounded-full bg-[#111111] text-lg font-black text-white"
+                          >
+                            -
+                          </button>
+                          <span className="min-w-12 text-center text-sm font-bold">
+                            {item.porQuilo
+                              ? item.quantidade.toFixed(3)
+                              : item.quantidade}
+                          </span>
+                          <button
+                            onClick={() => aumentarItem(item.id)}
+                            className="h-8 w-8 rounded-full bg-[#f97316] text-lg font-black text-white"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <p className="text-base font-extrabold text-[#111111]">
+                          {money(item.total)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-2xl border-2 border-[#f97316] bg-[#111111] p-4 text-white shadow-lg">
+              <div className="flex items-center justify-between text-base">
+                <span className="font-bold text-white/80">Total dos itens</span>
+                <strong className="text-2xl font-black text-white">
+                  {money(totalBruto)}
+                </strong>
+              </div>
+
+              <div className="mt-4 rounded-xl bg-[#f97316] px-4 py-4 text-center text-[#111111]">
+                <p className="text-sm font-black uppercase tracking-wide">
+                  Valor a cobrar
+                </p>
+                <p className="mt-1 text-4xl font-black leading-none md:text-5xl">
+                  {money(totalBruto)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button
+                onClick={limparVenda}
+                className="rounded-xl bg-[#2b2b2b] py-3 text-base font-bold text-white hover:bg-[#1f1f1f]"
+              >
+                Limpar
+              </button>
+
+              <button
+                onClick={imprimirContaAtual}
+                className="rounded-xl border-2 border-[#f97316] bg-white py-3 text-base font-bold text-[#f97316] hover:bg-[#fff4eb]"
+              >
+                Conta
+              </button>
+            </div>
+
+            <button
+              onClick={imprimirPedidoCozinhaAtual}
+              className="mt-3 rounded-xl bg-[#111111] py-3 text-base font-black uppercase tracking-wide text-[#f97316] hover:bg-[#232323]"
+            >
+              Imprimir cozinha
+            </button>
+
+            {atendimentoAtual && atendimentoAtual.tipo !== "Balcão" && (
+              <button
+                onClick={lancarNaMesa}
+                className="mt-4 rounded-xl bg-[#111111] py-4 text-lg font-black uppercase tracking-wide text-[#f97316] shadow-lg hover:bg-[#232323]"
+              >
+                {atendimentoAtual.tipo === "Mesa"
+                  ? "Lançar na mesa"
+                  : "Lançar na comanda"}
+              </button>
+            )}
+
+            <button
+              onClick={abrirPagamento}
+              className="mt-3 rounded-xl bg-[#f97316] py-4 text-xl font-black uppercase tracking-wide text-white shadow-lg hover:bg-[#ea580c]"
+            >
+              Pagar
+            </button>
+          </aside>
+        </section>
+      </div>
+
+      {mostrarAberturaCaixa && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-20">
+          <div className="w-[460px] rounded-2xl border-2 border-[#f97316] bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-black uppercase text-[#111111]">
+                {caixaAberto ? "Caixa aberto" : "Abrir caixa"}
+              </h2>
+
+              <button
+                onClick={() => setMostrarAberturaCaixa(false)}
+                className="text-2xl font-black text-[#111111]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {caixaAberto ? (
+              <div className="mt-5 rounded-xl border-2 border-green-200 bg-green-50 p-4">
+                <p className="text-sm font-black uppercase text-green-700">
+                  O caixa já está aberto.
+                </p>
+
+                <div className="mt-3 space-y-2 text-sm font-semibold text-slate-700">
+                  <p>
+                    Operador:{" "}
+                    <strong className="text-[#111111]">
+                      {caixaAtual?.operador}
+                    </strong>
+                  </p>
+                  <p>
+                    Valor de abertura:{" "}
+                    <strong className="text-[#111111]">
+                      {money(caixaAtual?.valorAbertura || 0)}
+                    </strong>
+                  </p>
+                  <p>
+                    Aberto em:{" "}
+                    <strong className="text-[#111111]">
+                      {formatDateTime(caixaAtual?.abertoEm || "")}
+                    </strong>
+                  </p>
+                </div>
+
+                <p className="mt-4 text-xs text-slate-500">
+                  O fechamento do caixa será feito em Operações de Caixa.
+                </p>
+
+                <button
+                  onClick={() => setMostrarAberturaCaixa(false)}
+                  className="mt-5 w-full rounded-xl bg-[#f97316] py-3 text-base font-black uppercase text-white"
+                >
+                  Continuar vendendo
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="mt-3 text-sm text-slate-600">
+                  Para finalizar vendas no PDV, primeiro abra o caixa do dia.
+                </p>
+
+                <div className="mt-5">
+                  <label className="text-sm font-extrabold uppercase text-[#111111]">
+                    Operador
+                  </label>
+                  <input
+                    value={operadorCaixa}
+                    onChange={(event) => setOperadorCaixa(event.target.value)}
+                    placeholder="Ex: Adm, Caixa1"
+                    className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-base font-bold outline-none"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <label className="text-sm font-extrabold uppercase text-[#111111]">
+                    Valor inicial / troco
+                  </label>
+                  <input
+                    value={valorAbertura}
+                    onChange={(event) => setValorAbertura(event.target.value)}
+                    placeholder="R$0,00"
+                    className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-base font-bold outline-none"
+                  />
+                </div>
+
+                <div className="mt-5 rounded-xl bg-[#111111] p-4 text-white">
+                  <p className="text-xs font-black uppercase text-white/70">
+                    Resumo
+                  </p>
+                  <div className="mt-2 flex justify-between text-base">
+                    <span>Valor de abertura</span>
+                    <strong className="text-xl text-[#f97316]">
+                      {money(asNumber(valorAbertura))}
+                    </strong>
+                  </div>
+                </div>
+
+                <button
+                  onClick={abrirCaixa}
+                  className="mt-5 w-full rounded-xl bg-[#f97316] py-4 text-lg font-black uppercase text-white hover:bg-[#ea580c]"
+                >
+                  Abrir caixa
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pesoModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-24">
+          <div className="w-[380px] rounded-2xl border-2 border-[#f1d2ba] bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-black uppercase text-[#111111]">
+                Item cobrado por peso
+              </h2>
+              <button
+                onClick={() => setPesoModal(null)}
+                className="text-2xl font-black text-[#111111]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="mt-4 text-base font-extrabold text-[#111111]">
+              {pesoModal.produto.nome}
+            </p>
+            <p className="text-sm font-medium text-slate-600">
+              Valor por kg: {money(pesoModal.produto.preco)}
+            </p>
+
+            <input
+              autoFocus
+              value={pesoModal.peso}
+              onChange={(event) =>
+                setPesoModal((atual) =>
+                  atual ? { ...atual, peso: event.target.value } : atual
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") confirmarPeso();
+              }}
+              placeholder="0,000"
+              className="mt-4 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-center text-xl font-bold outline-none"
+            />
+
+            <button
+              onClick={confirmarPeso}
+              className="mt-4 w-full rounded-xl bg-[#f97316] py-3 text-base font-black uppercase text-white hover:bg-[#ea580c]"
+            >
+              Confirmar (Enter)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mostrarPagamento && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-16">
+          <div className="w-[500px] rounded-2xl border-2 border-[#f1d2ba] bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-black uppercase text-[#111111]">
+                Finalizar venda
+              </h2>
+              <button
+                onClick={() => setMostrarPagamento(false)}
+                className="text-2xl font-black text-[#111111]"
+              >
+                ✕
+              </button>
+            </div>
+
+            {atendimentoAtual && atendimentoAtual.tipo !== "Balcão" && (
+              <div className="mt-4 rounded-xl bg-[#111111] p-4 text-white">
+                <p className="text-xs font-black uppercase text-white/60">
+                  Pagamento vinculado
+                </p>
+                <p className="mt-1 text-2xl font-black text-[#f97316]">
+                  {atendimentoAtual.tipo === "Mesa"
+                    ? `Mesa nº ${atendimentoAtual.mesaNumero}`
+                    : `Comanda ${atendimentoAtual.comandaNome || ""}`}
+                </p>
+                <p className="text-sm font-bold">
+                  Cliente: {cliente || atendimentoAtual.cliente}
+                </p>
+              </div>
+            )}
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              {(["Dinheiro", "PIX", "Débito", "Crédito"] as FormaPagamento[]).map(
+                (forma) => (
+                  <button
+                    key={forma}
+                    onClick={() => setFormaPagamento(forma)}
+                    className={`rounded-xl py-3 text-base font-black uppercase ${
+                      formaPagamento === forma
+                        ? "bg-[#f97316] text-white"
+                        : "bg-[#111111] text-white/90"
+                    }`}
+                  >
+                    {forma}
+                  </button>
+                )
+              )}
+            </div>
+
+            {formaPagamento === "Dinheiro" && (
+              <div className="mt-4">
+                <label className="text-sm font-extrabold uppercase text-[#111111]">
+                  Valor recebido
+                </label>
+                <input
+                  value={valorRecebido}
+                  onChange={(event) => setValorRecebido(event.target.value)}
+                  placeholder="R$0,00"
+                  className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-lg font-bold outline-none"
+                />
+
+                <div className="mt-3 flex justify-between text-base">
+                  <span className="font-bold text-[#111111]">Troco</span>
+                  <strong className="text-2xl font-black text-[#f97316]">
+                    {money(troco)}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 rounded-2xl border-2 border-[#f1d2ba] bg-[#fffaf6] p-4">
+              <div className="flex justify-between">
+                <span className="font-semibold text-[#111111]">Total bruto</span>
+                <strong className="text-lg font-black text-[#111111]">
+                  {money(totalBruto)}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">Taxa interna</span>
+                <strong className="text-lg font-black text-[#111111]">
+                  {taxaPercentual > 0
+                    ? `${taxaPercentual.toFixed(2).replace(".", ",")}%`
+                    : "R$0,00"}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">
+                  Valor descontado
+                </span>
+                <strong className="text-lg font-black text-[#111111]">
+                  {money(valorTaxa)}
+                </strong>
+              </div>
+
+              <div className="mt-4 rounded-xl bg-[#111111] px-4 py-4 text-center text-white">
+                <p className="text-sm font-black uppercase tracking-wide text-white/80">
+                  Valor líquido registrado
+                </p>
+                <p className="mt-1 text-4xl font-black text-[#f97316]">
+                  {money(valorLiquido)}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-slate-500">
+              O cliente paga o valor bruto. O sistema registra internamente o
+              valor líquido após taxas.
+            </p>
+
+            <button
+              onClick={finalizarVenda}
+              className="mt-5 w-full rounded-xl bg-[#f97316] py-4 text-lg font-black uppercase text-white hover:bg-[#ea580c]"
+            >
+              Finalizar venda
+            </button>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}

@@ -194,7 +194,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 bg-slate-950 text-white">
+        <aside className="w-72 shrink-0 bg-slate-950 text-white">
           <div className="border-b border-white/10 px-6 py-6">
             <img
               src="/logo-01.png"
@@ -209,6 +209,13 @@ export default function DashboardPage() {
               className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
             >
               Dashboard
+            </a>
+
+            <a
+              href="/pdv"
+              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
+            >
+              Acessar PDV
             </a>
 
             <a
@@ -266,6 +273,7 @@ export default function DashboardPage() {
             >
               Configurações
             </a>
+
           </nav>
         </aside>
 
@@ -463,6 +471,13 @@ export default function DashboardPage() {
                 </h2>
 
                 <div className="mt-5 space-y-3">
+                  <a
+                    href="/pdv"
+                    className="block rounded-xl bg-orange-500 px-4 py-3 text-center text-sm font-bold text-white hover:bg-orange-600"
+                  >
+                    Acessar PDV
+                  </a>
+
                   <a
                     href="/entradas"
                     className="block rounded-xl bg-emerald-600 px-4 py-3 text-center text-sm font-bold text-white hover:bg-emerald-700"

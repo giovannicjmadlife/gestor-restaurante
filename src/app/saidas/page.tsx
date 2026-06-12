@@ -1,7 +1,5 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type StatusSaida = "Pago" | "Pendente" | "Vencido";
@@ -76,101 +74,88 @@ function formatarData(data: string) {
 
 function MenuLateral() {
   return (
-    <aside className="w-full border-b border-slate-800 bg-slate-950 p-5 text-white lg:min-h-screen lg:w-72 lg:border-b-0">
-      <div className="mb-8 flex flex-col items-start">
-        <div className="mb-5 w-full rounded-2xl bg-black/20 p-3">
-          <Image
-            src="/logo-01.png"
-            alt="Logo Samambaia Restaurante e Pizzaria"
-            width={220}
-            height={160}
-            className="h-auto w-full object-contain"
-            priority
-          />
-        </div>
+    <aside className="w-72 shrink-0 bg-slate-950 text-white">
+          <div className="border-b border-white/10 px-6 py-6">
+            <img
+              src="/logo-01.png"
+              alt="Samambaia Restaurante e Pizzaria"
+              className="max-h-20 w-auto"
+            />
+          </div>
 
-        <p className="text-xs uppercase tracking-[0.35em] text-orange-400">
-          Gestor
-        </p>
+          <nav className="space-y-2 px-4 py-6">
+            <a
+              href="/"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Dashboard
+            </a>
 
-        <h1 className="mt-2 text-2xl font-bold">Restaurante</h1>
+            <a
+              href="/pdv"
+              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
+            >
+              Acessar PDV
+            </a>
 
-        <p className="mt-2 text-sm leading-relaxed text-slate-300">
-          Controle financeiro simples para acompanhar o caixa do seu negócio.
-        </p>
-      </div>
+            <a
+              href="/entradas"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Entradas
+            </a>
 
-      <nav className="grid gap-2">
-        <Link
-          href="/"
-          className="rounded-xl px-4 py-3 text-sm font-semibold text-slate-200 transition hover:bg-white/10"
-        >
-          Dashboard
-        </Link>
+            <a
+              href="/saidas"
+              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
+            >
+              Saídas
+            </a>
 
-        <Link
-          href="/entradas"
-          className="rounded-xl px-4 py-3 text-sm font-semibold text-slate-200 transition hover:bg-white/10"
-        >
-          Entradas
-        </Link>
+            <a
+              href="/contas-a-pagar"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Contas a pagar
+            </a>
 
-        <Link
-          href="/saidas"
-          className="rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white shadow-sm"
-        >
-          Saídas
-        </Link>
+            <a
+              href="/contas-a-receber"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Contas a receber
+            </a>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Contas a pagar
-        </button>
+            <a
+              href="/folha-de-pagamento"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Folha de pagamento
+            </a>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Contas a receber
-        </button>
+            <a
+              href="/investimentos"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Investimentos
+            </a>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Folha de pagamento
-        </button>
+            <a
+              href="/relatorios"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Relatórios
+            </a>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Investimentos
-        </button>
+            <a
+              href="/configuracoes"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
+              Configurações
+            </a>
 
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Relatórios
-        </button>
-
-        <button
-          type="button"
-          disabled
-          className="rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500"
-        >
-          Configurações
-        </button>
-      </nav>
-    </aside>
+          </nav>
+        </aside>
   );
 }
 
@@ -323,7 +308,7 @@ export default function SaidasPage() {
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
-      <div className="flex min-h-screen flex-col lg:flex-row">
+      <div className="flex min-h-screen">
         <MenuLateral />
 
         <section className="flex-1 p-4 sm:p-6 lg:p-8">
@@ -345,12 +330,12 @@ export default function SaidasPage() {
                 </p>
               </div>
 
-              <Link
+              <a
                 href="/"
                 className="rounded-xl bg-slate-950 px-5 py-3 text-center text-sm font-bold text-white shadow-sm transition hover:bg-slate-800"
               >
                 Voltar ao dashboard
-              </Link>
+              </a>
             </div>
           </div>
 

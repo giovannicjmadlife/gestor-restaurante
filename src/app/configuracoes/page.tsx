@@ -426,7 +426,7 @@ export default function ConfiguracoesPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 bg-slate-950 text-white">
+        <aside className="w-72 shrink-0 bg-slate-950 text-white">
           <div className="border-b border-white/10 px-6 py-6">
             <img
               src="/logo-01.png"
@@ -436,39 +436,76 @@ export default function ConfiguracoesPage() {
           </div>
 
           <nav className="space-y-2 px-4 py-6">
-            <a href="/" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+            <a
+              href="/"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Dashboard
             </a>
-            <a href="/entradas" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/pdv"
+              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
+            >
+              Acessar PDV
+            </a>
+
+            <a
+              href="/entradas"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Entradas
             </a>
-            <a href="/saidas" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/saidas"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Saídas
             </a>
-            <a href="/contas-a-pagar" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/contas-a-pagar"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Contas a pagar
             </a>
-            <a href="/contas-a-receber" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/contas-a-receber"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Contas a receber
             </a>
-            <a href="/folha-de-pagamento" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/folha-de-pagamento"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Folha de pagamento
             </a>
-            <a href="/investimentos" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/investimentos"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Investimentos
             </a>
-            <a href="/relatorios" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a
+              href="/relatorios"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
+            >
               Relatórios
             </a>
-            <a href="/configuracoes" className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white">
+
+            <a
+              href="/configuracoes"
+              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
+            >
               Configurações
             </a>
-            <a href="/cupom" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
-              Cupom/recibo
-            </a>
-            <a href="/produtos" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
-              Produtos/itens
-            </a>
+
           </nav>
         </aside>
 
