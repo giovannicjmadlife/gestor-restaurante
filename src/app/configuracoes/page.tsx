@@ -230,7 +230,10 @@ export default function ConfiguracoesPage() {
     }
 
     setConfiguracoes(configuracoesPadrao);
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(configuracoesPadrao));
+    localStorage.setItem(
+      CONFIG_STORAGE_KEY,
+      JSON.stringify(configuracoesPadrao)
+    );
     setSalvoComSucesso(true);
 
     setTimeout(() => {
@@ -286,7 +289,11 @@ export default function ConfiguracoesPage() {
 
     const valorNumerico = Number(valorTaxaMaquininha.replace(",", "."));
 
-    if (!nomeTaxaMaquininha.trim() || !valorTaxaMaquininha || valorNumerico < 0) {
+    if (
+      !nomeTaxaMaquininha.trim() ||
+      !valorTaxaMaquininha ||
+      valorNumerico < 0
+    ) {
       alert("Preencha o nome da taxa e o valor corretamente.");
       return;
     }
@@ -505,7 +512,6 @@ export default function ConfiguracoesPage() {
             >
               Configurações
             </a>
-
           </nav>
         </aside>
 
@@ -521,7 +527,7 @@ export default function ConfiguracoesPage() {
 
             <p className="text-sm text-slate-600">
               Cadastre os dados do restaurante, taxas de maquininha, taxas de
-              delivery e a taxa de entrega.
+              delivery, taxa de entrega e cadastros operacionais.
             </p>
           </div>
 
@@ -556,25 +562,31 @@ export default function ConfiguracoesPage() {
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">PDV</p>
-              <strong className="mt-2 block text-2xl text-blue-700">
-                Em breve
+            <a
+              href="/produtos"
+              className="rounded-2xl border border-slate-200 bg-white p-5 hover:border-orange-300 hover:bg-orange-50"
+            >
+              <p className="text-sm text-slate-500">Produtos/itens</p>
+              <strong className="mt-2 block text-2xl text-orange-600">
+                Abrir
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Venda rápida com produtos.
+                Almoço, janta, bebidas e estoque.
               </p>
-            </div>
+            </a>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Cupom/recibo</p>
+            <a
+              href="/correntistas"
+              className="rounded-2xl border border-slate-200 bg-white p-5 hover:border-emerald-300 hover:bg-emerald-50"
+            >
+              <p className="text-sm text-slate-500">Correntistas</p>
               <strong className="mt-2 block text-2xl text-emerald-700">
-                Ativo
+                Abrir
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Comprovante simples.
+                Clientes por conta ou fiado.
               </p>
-            </div>
+            </a>
           </div>
 
           <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1fr_420px]">
@@ -810,6 +822,34 @@ export default function ConfiguracoesPage() {
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6">
                 <h2 className="text-xl font-bold text-slate-950">
+                  Cadastros do sistema
+                </h2>
+
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  Use os atalhos abaixo para cadastrar os itens que serão usados
+                  no PDV, nas mesas, comandas, vendas rápidas e contas a
+                  receber.
+                </p>
+
+                <div className="mt-5 grid grid-cols-1 gap-3">
+                  <a
+                    href="/produtos"
+                    className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-4 text-sm font-bold text-orange-800 hover:bg-orange-100"
+                  >
+                    Abrir cadastro de produtos →
+                  </a>
+
+                  <a
+                    href="/correntistas"
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-bold text-emerald-800 hover:bg-emerald-100"
+                  >
+                    Abrir cadastro de correntistas →
+                  </a>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                <h2 className="text-xl font-bold text-slate-950">
                   PDV em breve
                 </h2>
 
@@ -819,6 +859,86 @@ export default function ConfiguracoesPage() {
                   estoque das bebidas e lançar o valor em Entradas.
                 </p>
               </div>
+            </div>
+          </div>
+
+          <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="mb-6">
+              <p className="text-sm font-medium uppercase tracking-wide text-orange-600">
+                Cadastros operacionais
+              </p>
+
+              <h2 className="mt-1 text-xl font-bold text-slate-950">
+                Produtos e correntistas
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Acesse os cadastros usados no PDV, nas vendas, nas comandas, nas
+                mesas e nas contas a receber.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <a
+                href="/produtos"
+                className="block rounded-2xl border border-orange-200 bg-orange-50 p-6 hover:border-orange-400 hover:bg-orange-100"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-orange-700">
+                      Cadastro de produtos
+                    </p>
+
+                    <h3 className="mt-2 text-2xl font-bold text-orange-900">
+                      Produtos/itens
+                    </h3>
+
+                    <p className="mt-3 text-sm leading-6 text-orange-800">
+                      Cadastre almoço, janta, bebidas, marmitex, pizza, porções,
+                      produtos por quilo, estoque e valores de venda.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-orange-500 px-3 py-1 text-xs font-bold text-white">
+                    Abrir
+                  </span>
+                </div>
+
+                <div className="mt-5 rounded-xl bg-white px-4 py-3 text-sm font-bold text-orange-700">
+                  Abrir cadastro de produtos →
+                </div>
+              </a>
+
+              <a
+                href="/correntistas"
+                className="block rounded-2xl border border-emerald-200 bg-emerald-50 p-6 hover:border-emerald-400 hover:bg-emerald-100"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-emerald-700">
+                      Cadastro de clientes por conta
+                    </p>
+
+                    <h3 className="mt-2 text-2xl font-bold text-emerald-900">
+                      Correntistas
+                    </h3>
+
+                    <p className="mt-3 text-sm leading-6 text-emerald-800">
+                      Cadastre clientes que compram fiado, por conta ou no
+                      crédito para usar futuramente no PDV e nas contas a
+                      receber.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white">
+                    Abrir
+                  </span>
+                </div>
+
+                <div className="mt-5 rounded-xl bg-white px-4 py-3 text-sm font-bold text-emerald-700">
+                  Abrir cadastro de correntistas →
+                </div>
+              </a>
             </div>
           </div>
 
@@ -1104,6 +1224,7 @@ export default function ConfiguracoesPage() {
                 "Configurações",
                 "Taxas",
                 "Produtos/itens",
+                "Correntistas",
                 "Cupom/recibo",
               ].map((item) => (
                 <div
