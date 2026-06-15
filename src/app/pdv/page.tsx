@@ -2786,37 +2786,19 @@ export default function PdvPage() {
                 </strong>
               </div>
 
-              <div className="mt-2 flex justify-between">
-                <span className="font-semibold text-[#111111]">Taxa interna</span>
-                <strong className="text-lg font-black text-[#111111]">
-                  {taxaPercentual > 0
-                    ? `${taxaPercentual.toFixed(2).replace(".", ",")}%`
-                    : "R$0,00"}
-                </strong>
-              </div>
-
-              <div className="mt-2 flex justify-between">
-                <span className="font-semibold text-[#111111]">
-                  Valor descontado
-                </span>
-                <strong className="text-lg font-black text-[#111111]">
-                  {money(valorTaxa)}
-                </strong>
-              </div>
-
               <div className="mt-4 rounded-xl bg-[#111111] px-4 py-4 text-center text-white">
                 <p className="text-sm font-black uppercase tracking-wide text-white/80">
-                  Valor líquido registrado
+                  Valor que o cliente vai pagar
                 </p>
                 <p className="mt-1 text-4xl font-black text-[#f97316]">
-                  {money(valorLiquido)}
+                  {money(valorCobrar)}
                 </p>
               </div>
             </div>
 
             <p className="mt-3 text-xs text-slate-500">
-              O cliente paga o valor a cobrar. O sistema registra o desconto,
-              as taxas internas e o valor líquido.
+              O cliente paga somente o valor a cobrar. As taxas internas ficam
+              registradas apenas para os relatórios e dashboard.
             </p>
 
             <button

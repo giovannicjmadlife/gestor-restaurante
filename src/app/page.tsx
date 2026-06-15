@@ -153,6 +153,27 @@ function descontoEntrada(entrada: Entrada) {
   return numeroSeguro(entrada.descontoValor);
 }
 
+function formaPagamentoEntrada(entrada: Entrada) {
+  const formaOriginal =
+    entrada.formaRecebimento || entrada.formaPagamento || entrada.forma || "Não informado";
+
+  const forma = formaOriginal
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+
+  if (forma.includes("dinheiro")) return "Dinheiro";
+  if (forma.includes("pix")) return "PIX";
+  if (forma.includes("debito")) return "Débito";
+  if (forma.includes("credito")) return "Crédito";
+  if (forma.includes("correntista") || forma.includes("fiado") || forma.includes("conta")) {
+    return "Correntista";
+  }
+  if (forma.includes("delivery")) return "Delivery";
+
+  return formaOriginal || "Não informado";
+}
+
 export default function DashboardPage() {
   const [entradas, setEntradas] = useState<Entrada[]>([]);
   const [saidas, setSaidas] = useState<Saida[]>([]);
@@ -258,6 +279,45 @@ export default function DashboardPage() {
       totalLancamentos,
     };
   }, [entradas, saidas, contasReceber, folhaPagamento]);
+
+  const formasPagamentoMes = useMemo(() => {
+    const entradasDoMes = entradas.filter((entrada) =>
+      pertenceAoMesAtual(entrada.data)
+    );
+
+    const agrupado = new Map<
+      string,
+      { forma: string; quantidade: number; faturamento: number; liquido: number }
+    >();
+
+    entradasDoMes.forEach((entrada) => {
+      const forma = formaPagamentoEntrada(entrada);
+      const atual = agrupado.get(forma) || {
+        forma,
+        quantidade: 0,
+        faturamento: 0,
+        liquido: 0,
+      };
+
+      atual.quantidade += 1;
+      atual.faturamento += valorBrutoEntrada(entrada);
+      atual.liquido += valorLiquidoEntrada(entrada);
+
+      agrupado.set(forma, atual);
+    });
+
+    const lista = Array.from(agrupado.values()).sort(
+      (a, b) => b.faturamento - a.faturamento
+    );
+
+    const maiorValor = lista[0]?.faturamento || 0;
+
+    return lista.map((item) => ({
+      ...item,
+      percentual:
+        maiorValor > 0 ? Math.max((item.faturamento / maiorValor) * 100, 4) : 0,
+    }));
+  }, [entradas]);
 
   const ultimosLancamentos = useMemo(() => {
     const listaEntradas = entradas.map((item) => ({
@@ -425,7 +485,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Faturado no mês</p>
+              <p className="text-sm text-slate-500">Faturamento do mês</p>
               <strong className="mt-2 block text-2xl text-slate-950">
                 {formatarMoeda(resumo.faturamentoMes)}
               </strong>
@@ -435,7 +495,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Líquido no mês</p>
+              <p className="text-sm text-slate-500">Valor líquido vendido</p>
               <strong className="mt-2 block text-2xl text-emerald-700">
                 {formatarMoeda(resumo.liquidoMes)}
               </strong>
@@ -487,6 +547,50 @@ export default function DashboardPage() {
                 Líquido - despesas - folha + receber - pagar.
               </p>
             </div>
+          </div>
+
+          <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Formas de pagamento no mês
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Acompanhe qual forma de pagamento mais vendeu por faturamento bruto.
+                </p>
+              </div>
+
+              {formasPagamentoMes.length > 0 && (
+                <div className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white">
+                  Mais vendido: {formasPagamentoMes[0].forma}
+                </div>
+              )}
+            </div>
+
+            {formasPagamentoMes.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                Nenhuma venda no mês para gerar o gráfico.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {formasPagamentoMes.map((item) => (
+                  <div key={item.forma}>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <span className="font-bold text-slate-950">{item.forma}</span>
+                      <span className="font-semibold text-slate-600">
+                        {item.quantidade} venda(s) · {formatarMoeda(item.faturamento)} faturado · {formatarMoeda(item.liquido)} líquido
+                      </span>
+                    </div>
+                    <div className="h-4 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className="h-full rounded-full bg-orange-500"
+                        style={{ width: `${item.percentual}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
