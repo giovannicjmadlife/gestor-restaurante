@@ -24,6 +24,7 @@ type ProdutoView = {
 type CartItem = {
   id: string;
   produtoId: string;
+  produtoIdsMetade?: string[];
   codigo: string;
   nome: string;
   categoria: string;
@@ -36,6 +37,8 @@ type CartItem = {
   total: number;
   porQuilo: boolean;
   unidade: "un" | "kg";
+  meiaPizza?: boolean;
+  saboresPizza?: string[];
 };
 
 type FormaPagamento = "Dinheiro" | "PIX" | "Débito" | "Crédito";
@@ -346,6 +349,9 @@ export default function PdvPage() {
   const [grupoSelecionado, setGrupoSelecionado] = useState("");
   const [subgrupoSelecionado, setSubgrupoSelecionado] = useState("");
   const [opcaoSelecionada, setOpcaoSelecionada] = useState("");
+  const [modoMeiaPizza, setModoMeiaPizza] = useState(false);
+  const [primeiraMetadePizza, setPrimeiraMetadePizza] =
+    useState<ProdutoView | null>(null);
   const [busca, setBusca] = useState("");
   const [carrinho, setCarrinho] = useState<CartItem[]>([]);
 
@@ -469,6 +475,17 @@ export default function PdvPage() {
     return "Outros";
   }
 
+  function produtoEhPizza(produto: ProdutoView) {
+    const categoriaProduto = normalizeText(produto.categoria);
+    const grupoProduto = normalizeText(produto.grupo);
+
+    return categoriaProduto.includes("pizza") || grupoProduto.includes("pizza");
+  }
+
+  function limparSelecaoMeiaPizza() {
+    setPrimeiraMetadePizza(null);
+  }
+
   function produtoPertenceAoCard(produto: ProdutoView, card: string) {
     if (!card) return true;
     return categoriaPdvDoProduto(produto) === card;
@@ -555,16 +572,23 @@ export default function PdvPage() {
     setGrupoSelecionado("");
     setSubgrupoSelecionado("");
     setOpcaoSelecionada("");
+    limparSelecaoMeiaPizza();
   }, [categoriaSelecionada]);
 
   useEffect(() => {
     setSubgrupoSelecionado("");
     setOpcaoSelecionada("");
+    limparSelecaoMeiaPizza();
   }, [grupoSelecionado]);
 
   useEffect(() => {
     setOpcaoSelecionada("");
+    limparSelecaoMeiaPizza();
   }, [subgrupoSelecionado]);
+
+  useEffect(() => {
+    limparSelecaoMeiaPizza();
+  }, [opcaoSelecionada]);
 
   const produtosFiltrados = useMemo(() => {
     const buscaNormalizada = normalizeText(busca);
@@ -742,9 +766,74 @@ export default function PdvPage() {
     alert("Caixa aberto com sucesso.");
   }
 
+  function adicionarProdutoMeiaPizza(produto: ProdutoView) {
+    if (!produtoEhPizza(produto)) {
+      adicionarProduto(produto);
+      return;
+    }
+
+    if (produto.controlaEstoque && produto.estoque <= 0) {
+      alert("Este produto está sem estoque.");
+      return;
+    }
+
+    if (!primeiraMetadePizza) {
+      setPrimeiraMetadePizza(produto);
+      return;
+    }
+
+    if (primeiraMetadePizza.id === produto.id) {
+      alert("Escolha um segundo sabor diferente para montar a meia pizza.");
+      return;
+    }
+
+    const mesmoTipoPizza =
+      normalizeText(primeiraMetadePizza.subgrupo) === normalizeText(produto.subgrupo);
+
+    const mesmoTamanho =
+      normalizeText(primeiraMetadePizza.opcao) === normalizeText(produto.opcao);
+
+    if (!mesmoTipoPizza || !mesmoTamanho) {
+      alert("A meia pizza precisa ser do mesmo tipo e do mesmo tamanho.");
+      return;
+    }
+
+    const precoMeiaPizza = Number(
+      ((primeiraMetadePizza.preco + produto.preco) / 2).toFixed(2)
+    );
+
+    const novoItem: CartItem = {
+      id: uid(),
+      produtoId: `${primeiraMetadePizza.id}+${produto.id}`,
+      produtoIdsMetade: [primeiraMetadePizza.id, produto.id],
+      codigo: `${primeiraMetadePizza.codigo}/${produto.codigo}`,
+      nome: `1/2 ${primeiraMetadePizza.nome} + 1/2 ${produto.nome}`,
+      categoria: produto.categoria || primeiraMetadePizza.categoria,
+      grupo: "Pizza",
+      subgrupo: produto.subgrupo || primeiraMetadePizza.subgrupo,
+      opcao: produto.opcao || primeiraMetadePizza.opcao,
+      tipo: produto.tipo || primeiraMetadePizza.tipo,
+      precoUnitario: precoMeiaPizza,
+      quantidade: 1,
+      total: precoMeiaPizza,
+      porQuilo: false,
+      unidade: "un",
+      meiaPizza: true,
+      saboresPizza: [primeiraMetadePizza.nome, produto.nome],
+    };
+
+    setCarrinho((atual) => [...atual, novoItem]);
+    setPrimeiraMetadePizza(null);
+  }
+
   function adicionarProduto(produto: ProdutoView) {
     if (produto.controlaEstoque && produto.estoque <= 0) {
       alert("Este produto está sem estoque.");
+      return;
+    }
+
+    if (modoMeiaPizza && produtoEhPizza(produto)) {
+      adicionarProdutoMeiaPizza(produto);
       return;
     }
 
@@ -886,6 +975,7 @@ export default function PdvPage() {
 
     setCarrinho([]);
     setValorRecebido("");
+    setPrimeiraMetadePizza(null);
 
     if (!atendimentoAtual) {
       setCliente("");
@@ -927,7 +1017,9 @@ export default function PdvPage() {
       const produtoView = getProdutoView(produtoRaw, index);
 
       const itensVendidos = carrinho.filter(
-        (item) => item.produtoId === produtoView.id
+        (item) =>
+          item.produtoId === produtoView.id ||
+          item.produtoIdsMetade?.includes(produtoView.id)
       );
 
       if (itensVendidos.length === 0) return produtoRaw;
@@ -939,10 +1031,10 @@ export default function PdvPage() {
 
       if (!deveBaixar) return produtoRaw;
 
-      const quantidadeVendida = itensVendidos.reduce(
-        (total, item) => total + item.quantidade,
-        0
-      );
+      const quantidadeVendida = itensVendidos.reduce((total, item) => {
+        const quantidadeItem = item.meiaPizza ? item.quantidade * 0.5 : item.quantidade;
+        return total + quantidadeItem;
+      }, 0);
 
       const estoqueAtual = asNumber(produtoRaw.estoque);
       const novoEstoque = Math.max(estoqueAtual - quantidadeVendida, 0);
@@ -1256,6 +1348,7 @@ export default function PdvPage() {
     removerConsumoDepoisDoPagamento();
 
     setCarrinho([]);
+    setPrimeiraMetadePizza(null);
     setCliente("");
     setValorRecebido("");
     setFormaPagamento("Dinheiro");
@@ -1860,6 +1953,55 @@ export default function PdvPage() {
               </div>
             )}
 
+            {grupoSelecionado === "Pizza" && subgrupoSelecionado && opcaoSelecionada && (
+              <div className="mt-6 rounded-xl border-2 border-[#f1d2ba] bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-extrabold uppercase tracking-wide text-[#111111]">
+                      Meia pizza
+                    </h2>
+                    <p className="mt-1 text-xs font-semibold text-slate-600">
+                      Ative para escolher metade de um sabor e metade de outro.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModoMeiaPizza((ativo) => !ativo);
+                      setPrimeiraMetadePizza(null);
+                    }}
+                    className={`rounded-xl px-5 py-3 text-sm font-black uppercase transition ${
+                      modoMeiaPizza
+                        ? "bg-[#111111] text-[#f97316]"
+                        : "bg-[#f97316] text-white hover:bg-[#ea580c]"
+                    }`}
+                  >
+                    {modoMeiaPizza ? "Meia pizza ativa" : "Ativar meia pizza"}
+                  </button>
+                </div>
+
+                {modoMeiaPizza && (
+                  <div className="mt-3 rounded-lg bg-[#fff4eb] px-3 py-3 text-sm font-bold text-[#111111]">
+                    {primeiraMetadePizza ? (
+                      <>
+                        1ª metade: <span className="text-[#f97316]">{primeiraMetadePizza.nome}</span>. Agora escolha o 2º sabor.
+                        <button
+                          type="button"
+                          onClick={limparSelecaoMeiaPizza}
+                          className="ml-3 text-xs font-black uppercase text-red-600"
+                        >
+                          trocar
+                        </button>
+                      </>
+                    ) : (
+                      "Clique no primeiro sabor da pizza. Depois clique no segundo sabor."
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="mt-6">
               <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
                 Itens / opções
@@ -1934,6 +2076,9 @@ export default function PdvPage() {
                   const semEstoque =
                     produto.controlaEstoque && produto.estoque <= 0;
 
+                  const primeiraMetadeSelecionada =
+                    modoMeiaPizza && primeiraMetadePizza?.id === produto.id;
+
                   return (
                     <button
                       key={produto.id}
@@ -1942,10 +2087,16 @@ export default function PdvPage() {
                       className={`min-h-[110px] rounded-xl border-2 px-3 py-4 text-center shadow-sm transition ${
                         semEstoque
                           ? "border-slate-200 bg-slate-100 text-slate-400"
+                          : primeiraMetadeSelecionada
+                          ? "border-[#f97316] bg-[#111111] text-[#f97316]"
                           : "border-[#f1d2ba] bg-white hover:border-[#f97316] hover:bg-[#fff4eb]"
                       }`}
                     >
-                      <p className="text-[15px] font-extrabold uppercase leading-tight text-[#111111]">
+                      <p
+                        className={`text-[15px] font-extrabold uppercase leading-tight ${
+                          primeiraMetadeSelecionada ? "text-[#f97316]" : "text-[#111111]"
+                        }`}
+                      >
                         {produto.nome}
                       </p>
                       {(produto.subgrupo || produto.opcao) && (
@@ -1953,6 +2104,12 @@ export default function PdvPage() {
                           {[produto.subgrupo, produto.opcao].filter(Boolean).join(" • ")}
                         </p>
                       )}
+                      {primeiraMetadeSelecionada && (
+                        <p className="mt-2 text-xs font-black uppercase text-white">
+                          1ª metade selecionada
+                        </p>
+                      )}
+
                       <p className="mt-2 text-xl font-black text-[#f97316]">
                         {money(produto.preco)}
                       </p>
@@ -2043,6 +2200,11 @@ export default function PdvPage() {
                           <p className="text-sm font-extrabold uppercase text-[#111111]">
                             {item.nome}
                           </p>
+                          {item.meiaPizza && (
+                            <p className="mt-1 text-[11px] font-black uppercase text-[#f97316]">
+                              Meia pizza • {item.opcao || "tamanho não informado"}
+                            </p>
+                          )}
                           <p className="text-xs font-medium text-slate-600">
                             {item.porQuilo
                               ? `${item.quantidade.toFixed(3)} kg x ${money(
