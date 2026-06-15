@@ -8,7 +8,18 @@ type Entrada = {
   categoria: string;
   descricao: string;
   formaRecebimento: string;
+  formaPagamento?: string;
+  forma?: string;
   valor: number;
+  valorBruto?: number;
+  valorLiquido?: number;
+  valorOriginal?: number;
+  subtotalItens?: number;
+  valorCobrado?: number;
+  descontoValor?: number;
+  taxaPercentual?: number;
+  taxaDescontada?: number;
+  taxaDeliveryDescontada?: number;
 };
 
 type Saida = {
@@ -89,6 +100,59 @@ function lerLocalStorage<T>(chave: string): T[] {
   }
 }
 
+function numeroSeguro(valor: unknown) {
+  if (typeof valor === "number") {
+    return Number.isFinite(valor) ? valor : 0;
+  }
+
+  if (typeof valor === "string") {
+    const convertido = Number(valor.replace(",", "."));
+    return Number.isFinite(convertido) ? convertido : 0;
+  }
+
+  return 0;
+}
+
+function valorBrutoEntrada(entrada: Entrada) {
+  return (
+    numeroSeguro(entrada.valorBruto) ||
+    numeroSeguro(entrada.valorCobrado) ||
+    numeroSeguro(entrada.valor)
+  );
+}
+
+function taxaEntrada(entrada: Entrada) {
+  const taxaMaquininha = numeroSeguro(entrada.taxaDescontada);
+  const taxaDelivery = numeroSeguro(entrada.taxaDeliveryDescontada);
+
+  if (taxaMaquininha || taxaDelivery) {
+    return taxaMaquininha + taxaDelivery;
+  }
+
+  const bruto = numeroSeguro(entrada.valorBruto);
+  const liquido = numeroSeguro(entrada.valorLiquido);
+
+  if (bruto > 0 && liquido > 0 && bruto > liquido) {
+    return Number((bruto - liquido).toFixed(2));
+  }
+
+  return 0;
+}
+
+function valorLiquidoEntrada(entrada: Entrada) {
+  const liquido = numeroSeguro(entrada.valorLiquido);
+
+  if (liquido > 0) {
+    return liquido;
+  }
+
+  return Number((valorBrutoEntrada(entrada) - taxaEntrada(entrada)).toFixed(2));
+}
+
+function descontoEntrada(entrada: Entrada) {
+  return numeroSeguro(entrada.descontoValor);
+}
+
 export default function DashboardPage() {
   const [entradas, setEntradas] = useState<Entrada[]>([]);
   const [saidas, setSaidas] = useState<Saida[]>([]);
@@ -103,13 +167,53 @@ export default function DashboardPage() {
   }, []);
 
   const resumo = useMemo(() => {
-    const entradasHoje = entradas
-      .filter((entrada) => pertenceAoDiaAtual(entrada.data))
-      .reduce((acc, entrada) => acc + entrada.valor, 0);
+    const entradasDeHoje = entradas.filter((entrada) =>
+      pertenceAoDiaAtual(entrada.data)
+    );
 
-    const entradasMes = entradas
-      .filter((entrada) => pertenceAoMesAtual(entrada.data))
-      .reduce((acc, entrada) => acc + entrada.valor, 0);
+    const entradasDoMes = entradas.filter((entrada) =>
+      pertenceAoMesAtual(entrada.data)
+    );
+
+    const faturamentoHoje = entradasDeHoje.reduce(
+      (acc, entrada) => acc + valorBrutoEntrada(entrada),
+      0
+    );
+
+    const liquidoHoje = entradasDeHoje.reduce(
+      (acc, entrada) => acc + valorLiquidoEntrada(entrada),
+      0
+    );
+
+    const taxasHoje = entradasDeHoje.reduce(
+      (acc, entrada) => acc + taxaEntrada(entrada),
+      0
+    );
+
+    const descontosHoje = entradasDeHoje.reduce(
+      (acc, entrada) => acc + descontoEntrada(entrada),
+      0
+    );
+
+    const faturamentoMes = entradasDoMes.reduce(
+      (acc, entrada) => acc + valorBrutoEntrada(entrada),
+      0
+    );
+
+    const liquidoMes = entradasDoMes.reduce(
+      (acc, entrada) => acc + valorLiquidoEntrada(entrada),
+      0
+    );
+
+    const taxasMes = entradasDoMes.reduce(
+      (acc, entrada) => acc + taxaEntrada(entrada),
+      0
+    );
+
+    const descontosMes = entradasDoMes.reduce(
+      (acc, entrada) => acc + descontoEntrada(entrada),
+      0
+    );
 
     const despesasMes = saidas
       .filter((saida) => pertenceAoMesAtual(saida.data))
@@ -129,7 +233,7 @@ export default function DashboardPage() {
       )
       .reduce((acc, conta) => acc + conta.valor, 0);
 
-    const lucroEstimado = entradasMes - despesasMes - folhaMes;
+    const lucroEstimado = liquidoMes - despesasMes - folhaMes;
 
     const saldoPrevisto = lucroEstimado + contasAReceber - contasAPagar;
 
@@ -137,8 +241,14 @@ export default function DashboardPage() {
       entradas.length + saidas.length + contasReceber.length + folhaPagamento.length;
 
     return {
-      entradasHoje,
-      entradasMes,
+      faturamentoHoje,
+      liquidoHoje,
+      taxasHoje,
+      descontosHoje,
+      faturamentoMes,
+      liquidoMes,
+      taxasMes,
+      descontosMes,
       despesasMes,
       folhaMes,
       contasAPagar,
@@ -156,7 +266,7 @@ export default function DashboardPage() {
       tipo: "Entrada",
       descricao: item.descricao || item.categoria,
       categoria: item.categoria,
-      valor: item.valor,
+      valor: valorLiquidoEntrada(item),
     }));
 
     const listaSaidas = saidas.map((item) => ({
@@ -295,76 +405,72 @@ export default function DashboardPage() {
 
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Venda de hoje</p>
+              <p className="text-sm text-slate-500">Faturado hoje</p>
               <strong className="mt-2 block text-2xl text-slate-950">
-                {formatarMoeda(resumo.entradasHoje)}
+                {formatarMoeda(resumo.faturamentoHoje)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Soma das entradas lançadas hoje.
+                Total vendido hoje antes das taxas.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Venda do mês</p>
+              <p className="text-sm text-slate-500">Líquido hoje</p>
               <strong className="mt-2 block text-2xl text-emerald-700">
-                {formatarMoeda(resumo.entradasMes)}
+                {formatarMoeda(resumo.liquidoHoje)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Total de entradas do mês atual.
+                Faturado hoje menos taxas internas.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Despesas do mês</p>
+              <p className="text-sm text-slate-500">Faturado no mês</p>
+              <strong className="mt-2 block text-2xl text-slate-950">
+                {formatarMoeda(resumo.faturamentoMes)}
+              </strong>
+              <p className="mt-2 text-xs text-slate-500">
+                Soma bruta das entradas do mês.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-500">Líquido no mês</p>
+              <strong className="mt-2 block text-2xl text-emerald-700">
+                {formatarMoeda(resumo.liquidoMes)}
+              </strong>
+              <p className="mt-2 text-xs text-slate-500">
+                Entradas menos taxas de maquininha e delivery.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-500">Taxas descontadas</p>
               <strong className="mt-2 block text-2xl text-red-600">
-                {formatarMoeda(resumo.despesasMes)}
+                {formatarMoeda(resumo.taxasMes)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Soma das saídas lançadas no mês.
+                Crédito, débito, Pix e taxas de delivery do mês.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Lucro estimado</p>
-              <strong
-                className={`mt-2 block text-2xl ${
-                  resumo.lucroEstimado >= 0 ? "text-emerald-700" : "text-red-600"
-                }`}
-              >
-                {formatarMoeda(resumo.lucroEstimado)}
-              </strong>
-              <p className="mt-2 text-xs text-slate-500">
-                Venda do mês menos despesas e folha.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Contas a pagar</p>
+              <p className="text-sm text-slate-500">Descontos concedidos</p>
               <strong className="mt-2 block text-2xl text-orange-600">
-                {formatarMoeda(resumo.contasAPagar)}
+                {formatarMoeda(resumo.descontosMes)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Saídas pendentes ou vencidas.
+                Descontos em reais registrados nas vendas.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Contas a receber</p>
-              <strong className="mt-2 block text-2xl text-blue-700">
-                {formatarMoeda(resumo.contasAReceber)}
+              <p className="text-sm text-slate-500">Despesas + folha</p>
+              <strong className="mt-2 block text-2xl text-red-600">
+                {formatarMoeda(resumo.despesasMes + resumo.folhaMes)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Valores pendentes ou atrasados.
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Folha do mês</p>
-              <strong className="mt-2 block text-2xl text-purple-700">
-                {formatarMoeda(resumo.folhaMes)}
-              </strong>
-              <p className="mt-2 text-xs text-slate-500">
-                Total da folha cadastrada no mês.
+                Saídas lançadas no mês somadas à folha.
               </p>
             </div>
 
@@ -378,7 +484,7 @@ export default function DashboardPage() {
                 {formatarMoeda(resumo.saldoPrevisto)}
               </strong>
               <p className="mt-2 text-xs text-slate-500">
-                Lucro + receber - pagar.
+                Líquido - despesas - folha + receber - pagar.
               </p>
             </div>
           </div>

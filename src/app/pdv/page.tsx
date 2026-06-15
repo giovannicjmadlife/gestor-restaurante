@@ -41,7 +41,20 @@ type CartItem = {
   saboresPizza?: string[];
 };
 
-type FormaPagamento = "Dinheiro" | "PIX" | "Débito" | "Crédito";
+type FormaPagamento = "Dinheiro" | "PIX" | "Débito" | "Crédito" | "Correntista";
+
+type Correntista = {
+  id: string;
+  nome: string;
+  telefone?: string;
+  documento?: string;
+  limiteCredito?: number;
+  saldoAberto?: number;
+  status?: string;
+  observacoes?: string;
+  criadoEm?: string;
+  atualizadoEm?: string;
+};
 
 type PesoModal = {
   produto: ProdutoView;
@@ -100,6 +113,8 @@ const LS_PRODUTOS = "gestor-restaurante-produtos";
 const LS_ENTRADAS = "gestor-restaurante-entradas";
 const LS_VENDAS_DETALHADAS = "gestor-restaurante-vendas-detalhadas";
 const LS_TAXAS_MAQUININHAS = "gestor-restaurante-taxas-maquininhas";
+const LS_CONTAS_RECEBER = "gestor-restaurante-contas-receber";
+const LS_CORRENTISTAS = "gestor-restaurante-correntistas";
 
 const LS_CAIXA_ATUAL = "gestor-restaurante-caixa-atual";
 const LS_CAIXAS = "gestor-restaurante-caixas";
@@ -377,15 +392,24 @@ function getTaxaMaquininha(
   formaPagamento: FormaPagamento,
   taxas: ProdutoRaw[]
 ) {
-  if (formaPagamento === "Dinheiro" || formaPagamento === "PIX") return 0;
+  if (formaPagamento === "Dinheiro" || formaPagamento === "Correntista") {
+    return 0;
+  }
 
   const alvo =
     formaPagamento === "Crédito"
       ? ["credito", "crédito"]
-      : ["debito", "débito"];
+      : formaPagamento === "Débito"
+      ? ["debito", "débito"]
+      : ["pix"];
 
   for (const taxa of taxas) {
+    const ativo = taxa.ativo;
     const texto = normalizeText(Object.values(taxa).join(" "));
+
+    if (ativo === false) {
+      continue;
+    }
 
     const encontrouForma = alvo.some((palavra) => texto.includes(palavra));
 
@@ -406,6 +430,7 @@ function getTaxaMaquininha(
 export default function PdvPage() {
   const [produtos, setProdutos] = useState<ProdutoView[]>([]);
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
+  const [correntistas, setCorrentistas] = useState<Correntista[]>([]);
 
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("");
   const [grupoSelecionado, setGrupoSelecionado] = useState("");
@@ -422,6 +447,8 @@ export default function PdvPage() {
   const [formaPagamento, setFormaPagamento] =
     useState<FormaPagamento>("Dinheiro");
   const [valorRecebido, setValorRecebido] = useState("");
+  const [descontoReais, setDescontoReais] = useState("");
+  const [correntistaSelecionadoId, setCorrentistaSelecionadoId] = useState("");
 
   const [pesoModal, setPesoModal] = useState<PesoModal | null>(null);
 
@@ -449,6 +476,14 @@ export default function PdvPage() {
     );
 
     setTaxasMaquininhas(taxasStorage);
+
+    const correntistasStorage = safeJsonArray<Correntista>(
+      localStorage.getItem(LS_CORRENTISTAS)
+    );
+
+    setCorrentistas(
+      correntistasStorage.filter((correntista) => correntista.status !== "Inativo")
+    );
 
     const caixaSalvo = safeJsonObject<CaixaAtual>(
       localStorage.getItem(LS_CAIXA_ATUAL)
@@ -719,22 +754,38 @@ export default function PdvPage() {
     return getTaxaMaquininha(formaPagamento, taxasMaquininhas);
   }, [formaPagamento, taxasMaquininhas]);
 
+  const descontoNumerico = useMemo(() => {
+    const desconto = asNumber(descontoReais);
+    if (desconto <= 0) return 0;
+    return Math.min(desconto, totalBruto);
+  }, [descontoReais, totalBruto]);
+
+  const valorCobrar = useMemo(() => {
+    return Number(Math.max(totalBruto - descontoNumerico, 0).toFixed(2));
+  }, [totalBruto, descontoNumerico]);
+
   const valorTaxa = useMemo(() => {
-    return Number(((totalBruto * taxaPercentual) / 100).toFixed(2));
-  }, [totalBruto, taxaPercentual]);
+    return Number(((valorCobrar * taxaPercentual) / 100).toFixed(2));
+  }, [valorCobrar, taxaPercentual]);
 
   const valorLiquido = useMemo(() => {
-    return Number((totalBruto - valorTaxa).toFixed(2));
-  }, [totalBruto, valorTaxa]);
+    return Number((valorCobrar - valorTaxa).toFixed(2));
+  }, [valorCobrar, valorTaxa]);
 
   const troco = useMemo(() => {
     if (formaPagamento !== "Dinheiro") return 0;
 
     const recebido = asNumber(valorRecebido);
-    const diferenca = recebido - totalBruto;
+    const diferenca = recebido - valorCobrar;
 
     return diferenca > 0 ? diferenca : 0;
-  }, [formaPagamento, valorRecebido, totalBruto]);
+  }, [formaPagamento, valorRecebido, valorCobrar]);
+
+  const correntistaSelecionado = useMemo(() => {
+    return correntistas.find(
+      (correntista) => correntista.id === correntistaSelecionadoId
+    );
+  }, [correntistas, correntistaSelecionadoId]);
 
   const tipoAtendimento = atendimentoAtual?.tipo || "Balcão";
 
@@ -747,6 +798,8 @@ export default function PdvPage() {
       ? `Comanda ${atendimentoAtual.comandaNome || ""} - ${
           cliente || atendimentoAtual.cliente || "Não identificado"
         }`
+      : formaPagamento === "Correntista" && correntistaSelecionado
+      ? correntistaSelecionado.nome
       : cliente || "Não identificado";
 
   function registrarEventoCaixa(evento: ProdutoRaw) {
@@ -1037,6 +1090,8 @@ export default function PdvPage() {
 
     setCarrinho([]);
     setValorRecebido("");
+    setDescontoReais("");
+    setCorrentistaSelecionadoId("");
     setPrimeiraMetadePizza(null);
 
     if (!atendimentoAtual) {
@@ -1316,10 +1371,15 @@ export default function PdvPage() {
     if (formaPagamento === "Dinheiro") {
       const recebido = asNumber(valorRecebido);
 
-      if (recebido < totalBruto) {
-        alert("O valor recebido em dinheiro é menor que o total da venda.");
+      if (recebido < valorCobrar) {
+        alert("O valor recebido em dinheiro é menor que o valor a cobrar.");
         return;
       }
+    }
+
+    if (formaPagamento === "Correntista" && !correntistaSelecionado) {
+      alert("Selecione o correntista antes de finalizar a venda por conta.");
+      return;
     }
 
     const vendaId = uid();
@@ -1356,7 +1416,11 @@ export default function PdvPage() {
           : `Venda PDV - ${descricaoItens}`,
       formaRecebimento: formaPagamento,
       forma: formaPagamento,
-      valorBruto: totalBruto,
+      valorOriginal: totalBruto,
+      subtotalItens: totalBruto,
+      descontoValor: descontoNumerico,
+      valorBruto: valorCobrar,
+      valorCobrado: valorCobrar,
       taxaPercentual,
       taxaDescontada: valorTaxa,
       valorLiquido,
@@ -1393,7 +1457,11 @@ export default function PdvPage() {
       consumidor: consumidorVenda,
       formaPagamento,
       totalItens,
-      valorBruto: totalBruto,
+      valorOriginal: totalBruto,
+      subtotalItens: totalBruto,
+      descontoValor: descontoNumerico,
+      valorBruto: valorCobrar,
+      valorCobrado: valorCobrar,
       taxaPercentual,
       taxaDescontada: valorTaxa,
       valorLiquido,
@@ -1406,6 +1474,53 @@ export default function PdvPage() {
       JSON.stringify([novaVendaDetalhada, ...vendasAtuais])
     );
 
+    if (formaPagamento === "Correntista" && correntistaSelecionado) {
+      const contasAtuais = safeJsonArray<ProdutoRaw>(
+        localStorage.getItem(LS_CONTAS_RECEBER)
+      );
+
+      const novaContaReceber = {
+        id: uid(),
+        vendaId,
+        data: todayInputDate(),
+        cliente: correntistaSelecionado.nome,
+        correntistaId: correntistaSelecionado.id,
+        categoria: "Correntista",
+        formaPrevista: "Correntista",
+        descricao: `Venda PDV por conta - ${descricaoItens}`,
+        status: "Pendente",
+        valor: valorCobrar,
+        valorOriginal: totalBruto,
+        descontoValor: descontoNumerico,
+        criadoEm: agora.toISOString(),
+      };
+
+      localStorage.setItem(
+        LS_CONTAS_RECEBER,
+        JSON.stringify([novaContaReceber, ...contasAtuais])
+      );
+
+      const correntistasAtuais = safeJsonArray<Correntista>(
+        localStorage.getItem(LS_CORRENTISTAS)
+      );
+
+      const correntistasAtualizados = correntistasAtuais.map((correntista) => {
+        if (correntista.id !== correntistaSelecionado.id) return correntista;
+
+        return {
+          ...correntista,
+          saldoAberto:
+            asNumber(correntista.saldoAberto) + valorCobrar,
+          atualizadoEm: agora.toISOString(),
+        };
+      });
+
+      localStorage.setItem(
+        LS_CORRENTISTAS,
+        JSON.stringify(correntistasAtualizados)
+      );
+    }
+
     baixarEstoqueDosProdutos();
     removerConsumoDepoisDoPagamento();
 
@@ -1413,6 +1528,8 @@ export default function PdvPage() {
     setPrimeiraMetadePizza(null);
     setCliente("");
     setValorRecebido("");
+    setDescontoReais("");
+    setCorrentistaSelecionadoId("");
     setFormaPagamento("Dinheiro");
     setMostrarPagamento(false);
 
@@ -1567,7 +1684,7 @@ export default function PdvPage() {
 
           <div class="total">
             <span>Valor a cobrar</span>
-            <strong>${money(totalBruto)}</strong>
+            <strong>${money(valorCobrar)}</strong>
           </div>
 
           <div class="footer">
@@ -2568,7 +2685,7 @@ export default function PdvPage() {
             )}
 
             <div className="mt-5 grid grid-cols-2 gap-3">
-              {(["Dinheiro", "PIX", "Débito", "Crédito"] as FormaPagamento[]).map(
+              {(["Dinheiro", "PIX", "Débito", "Crédito", "Correntista"] as FormaPagamento[]).map(
                 (forma) => (
                   <button
                     key={forma}
@@ -2584,6 +2701,32 @@ export default function PdvPage() {
                 )
               )}
             </div>
+
+            {formaPagamento === "Correntista" && (
+              <div className="mt-4">
+                <label className="text-sm font-extrabold uppercase text-[#111111]">
+                  Correntista / por conta
+                </label>
+                <select
+                  value={correntistaSelecionadoId}
+                  onChange={(event) =>
+                    setCorrentistaSelecionadoId(event.target.value)
+                  }
+                  className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-sm font-bold outline-none"
+                >
+                  <option value="">Selecione o correntista</option>
+                  {correntistas.map((correntista) => (
+                    <option key={correntista.id} value={correntista.id}>
+                      {correntista.nome}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs font-semibold text-slate-500">
+                  A venda será registrada em contas a receber e no saldo aberto
+                  do correntista.
+                </p>
+              </div>
+            )}
 
             {formaPagamento === "Dinheiro" && (
               <div className="mt-4">
@@ -2606,11 +2749,40 @@ export default function PdvPage() {
               </div>
             )}
 
+            <div className="mt-4">
+              <label className="text-sm font-extrabold uppercase text-[#111111]">
+                Desconto em R$
+              </label>
+              <input
+                value={descontoReais}
+                onChange={(event) => setDescontoReais(event.target.value)}
+                placeholder="Ex: 2,00"
+                className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-lg font-bold outline-none"
+              />
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                O desconto reduz o valor cobrado do cliente e fica registrado na venda.
+              </p>
+            </div>
+
             <div className="mt-5 rounded-2xl border-2 border-[#f1d2ba] bg-[#fffaf6] p-4">
               <div className="flex justify-between">
-                <span className="font-semibold text-[#111111]">Total bruto</span>
+                <span className="font-semibold text-[#111111]">Subtotal dos itens</span>
                 <strong className="text-lg font-black text-[#111111]">
                   {money(totalBruto)}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">Desconto</span>
+                <strong className="text-lg font-black text-red-600">
+                  - {money(descontoNumerico)}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">Valor a cobrar</span>
+                <strong className="text-lg font-black text-[#f97316]">
+                  {money(valorCobrar)}
                 </strong>
               </div>
 
@@ -2643,8 +2815,8 @@ export default function PdvPage() {
             </div>
 
             <p className="mt-3 text-xs text-slate-500">
-              O cliente paga o valor bruto. O sistema registra internamente o
-              valor líquido após taxas.
+              O cliente paga o valor a cobrar. O sistema registra o desconto,
+              as taxas internas e o valor líquido.
             </p>
 
             <button

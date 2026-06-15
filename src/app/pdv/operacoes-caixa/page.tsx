@@ -208,6 +208,30 @@ function getStatusClass(status: string) {
   return "text-slate-700";
 }
 
+function valorBaseRegistro(registro: RegistroCaixa) {
+  return registro.valorBruto || registro.valor || 0;
+}
+
+function valorExibicaoRegistro(registro: RegistroCaixa) {
+  const status = normalizeText(registro.status);
+  const valor = Math.abs(valorBaseRegistro(registro));
+
+  if (status.includes("sangria") || status.includes("retirada")) {
+    return -valor;
+  }
+
+  return valor;
+}
+
+function valorRegistroNoTotal(registro: RegistroCaixa) {
+  const status = normalizeText(registro.status);
+
+  if (status.includes("cancelado")) return 0;
+  if (status.includes("fechamento")) return 0;
+
+  return valorExibicaoRegistro(registro);
+}
+
 function baixarCsv(nomeArquivo: string, linhas: string[][]) {
   const csv = linhas
     .map((linha) =>
@@ -318,7 +342,11 @@ export default function OperacoesCaixaPage() {
     registrosDoCaixaAtual.forEach((registro) => {
       const status = normalizeText(registro.status);
       const forma = normalizeText(registro.formaPagamento);
-      const valor = registro.valorBruto || registro.valor || 0;
+      const valor = Math.abs(valorBaseRegistro(registro));
+
+      if (status.includes("fechamento")) {
+        return;
+      }
 
       if (status.includes("finalizado")) {
         if (forma.includes("dinheiro")) dinheiro += valor;
@@ -330,11 +358,11 @@ export default function OperacoesCaixaPage() {
       }
 
       if (status.includes("refor")) {
-        dinheiro += Math.abs(registro.valor || 0);
+        dinheiro += Math.abs(valorBaseRegistro(registro));
       }
 
       if (status.includes("sangria") || status.includes("retirada")) {
-        dinheiro -= Math.abs(registro.valor || 0);
+        dinheiro -= Math.abs(valorBaseRegistro(registro));
       }
     });
 
@@ -436,14 +464,7 @@ export default function OperacoesCaixaPage() {
 
   const totalFiltrado = useMemo(() => {
     return registrosFiltrados.reduce((total, registro) => {
-      const status = normalizeText(registro.status);
-
-      if (status.includes("cancelado")) return total;
-      if (status.includes("sangria") || status.includes("retirada")) {
-        return total - Math.abs(registro.valor || 0);
-      }
-
-      return total + (registro.valorBruto || registro.valor || 0);
+      return total + valorRegistroNoTotal(registro);
     }, 0);
   }, [registrosFiltrados]);
 
@@ -482,6 +503,13 @@ export default function OperacoesCaixaPage() {
   }) {
     const agora = new Date();
 
+    const statusNormalizado = normalizeText(status);
+    const valorAssinado =
+      statusNormalizado.includes("sangria") ||
+      statusNormalizado.includes("retirada")
+        ? -Math.abs(valor)
+        : Math.abs(valor);
+
     return {
       id: uid(),
       caixaId: caixaAtual?.id || "",
@@ -494,9 +522,9 @@ export default function OperacoesCaixaPage() {
       consumidor,
       formaPagamento: "Dinheiro",
       senha: "-",
-      valorBruto: valor,
-      valorLiquido: valor,
-      valor,
+      valorBruto: valorAssinado,
+      valorLiquido: valorAssinado,
+      valor: valorAssinado,
       observacao,
     };
   }
@@ -956,7 +984,7 @@ export default function OperacoesCaixaPage() {
                         <td className="px-2 py-3">{registro.consumidor}</td>
                         <td className="px-2 py-3">{registro.senha}</td>
                         <td className="px-2 py-3 text-right font-bold">
-                          {money(registro.valorBruto || registro.valor)}
+                          {money(valorExibicaoRegistro(registro))}
                         </td>
                       </tr>
                     ))
@@ -972,7 +1000,7 @@ export default function OperacoesCaixaPage() {
 
               <div className="rounded-xl bg-[#111111] px-5 py-3 text-white">
                 <span className="mr-3 text-sm font-bold text-white/70">
-                  Total:
+                  Total sem fechamento:
                 </span>
                 <strong className="text-xl font-black text-[#f97316]">
                   {money(totalFiltrado)}
