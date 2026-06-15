@@ -9,6 +9,9 @@ type ProdutoView = {
   codigo: string;
   nome: string;
   categoria: string;
+  grupo: string;
+  subgrupo: string;
+  opcao: string;
   tipo: string;
   preco: number;
   ativo: boolean;
@@ -24,6 +27,9 @@ type CartItem = {
   codigo: string;
   nome: string;
   categoria: string;
+  grupo: string;
+  subgrupo: string;
+  opcao: string;
   tipo: string;
   precoUnitario: number;
   quantidade: number;
@@ -226,16 +232,30 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
     String(index + 1);
 
   const categoria =
+    asString(raw.categoriaPrincipal) || asString(raw.categoria) || "Outros";
+
+  const grupo =
+    asString(raw.grupo) ||
+    asString(raw.tipo) ||
     asString(raw.categoriaPrincipal) ||
     asString(raw.categoria) ||
-    asString(raw.grupo) ||
     "Outros";
 
-  const tipo =
-    asString(raw.tipo) ||
+  const subgrupo =
+    asString(raw.subgrupo) ||
     asString(raw.subcategoria) ||
-    asString(raw.unidade) ||
+    asString(raw.marca) ||
+    asString(raw.linha) ||
     "";
+
+  const opcao =
+    asString(raw.opcao) ||
+    asString(raw.variacao) ||
+    asString(raw.tamanho) ||
+    asString(raw.unidadeOpcao) ||
+    "";
+
+  const tipo = [grupo, subgrupo, opcao].filter(Boolean).join(" > ");
 
   const preco =
     asNumber(raw.valor) ||
@@ -276,6 +296,9 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
     codigo,
     nome,
     categoria,
+    grupo,
+    subgrupo,
+    opcao,
     tipo,
     preco,
     ativo,
@@ -325,6 +348,7 @@ export default function PdvPage() {
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
 
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("");
+  const [subgrupoSelecionado, setSubgrupoSelecionado] = useState("");
   const [busca, setBusca] = useState("");
   const [carrinho, setCarrinho] = useState<CartItem[]>([]);
 
@@ -417,9 +441,23 @@ export default function PdvPage() {
 
   const caixaAberto = caixaAtual?.status === "Aberto";
 
+  function obterCardPrincipal(produto: ProdutoView) {
+    return produto.grupo || produto.categoria || "Outros";
+  }
+
+  function produtoPertenceAoCard(produto: ProdutoView, card: string) {
+    if (!card) return true;
+
+    const cardNormalizado = normalizeText(card);
+    const grupoProduto = normalizeText(produto.grupo);
+    const categoriaProduto = normalizeText(produto.categoria);
+
+    return grupoProduto === cardNormalizado || categoriaProduto === cardNormalizado;
+  }
+
   const categorias = useMemo(() => {
     const lista = produtos
-      .map((produto) => produto.categoria)
+      .map((produto) => obterCardPrincipal(produto))
       .filter(Boolean)
       .map((categoria) => categoria.trim());
 
@@ -427,7 +465,7 @@ export default function PdvPage() {
 
     if (unicas.length === 0) return CATEGORIAS_PADRAO;
 
-    return unicas;
+    return unicas.sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [produtos]);
 
   useEffect(() => {
@@ -436,32 +474,44 @@ export default function PdvPage() {
     }
   }, [categorias, categoriaSelecionada]);
 
+  const produtosDoCardPrincipal = useMemo(() => {
+    return produtos.filter((produto) =>
+      produtoPertenceAoCard(produto, categoriaSelecionada)
+    );
+  }, [produtos, categoriaSelecionada]);
+
+  const subgruposDisponiveis = useMemo(() => {
+    const lista = produtosDoCardPrincipal
+      .map((produto) => produto.subgrupo.trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(lista)).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [produtosDoCardPrincipal]);
+
+  useEffect(() => {
+    setSubgrupoSelecionado("");
+  }, [categoriaSelecionada]);
+
   const produtosFiltrados = useMemo(() => {
     const buscaNormalizada = normalizeText(busca);
+    const temSubgrupos = subgruposDisponiveis.length > 0;
 
-    return produtos.filter((produto) => {
-      const categoriaProduto = normalizeText(produto.categoria);
-      const tipoProduto = normalizeText(produto.tipo);
-      const categoriaAtual = normalizeText(categoriaSelecionada);
-
-      const bateCategoria =
-        !categoriaSelecionada ||
-        categoriaProduto === categoriaAtual ||
-        tipoProduto === categoriaAtual ||
-        (categoriaAtual.includes("bebida") &&
-          (categoriaProduto.includes("bebida") ||
-            tipoProduto.includes("bebida")));
+    return produtosDoCardPrincipal.filter((produto) => {
+      const bateSubgrupo =
+        !temSubgrupos ||
+        !subgrupoSelecionado ||
+        normalizeText(produto.subgrupo) === normalizeText(subgrupoSelecionado);
 
       const textoProduto = normalizeText(
-        `${produto.nome} ${produto.codigo} ${produto.categoria} ${produto.tipo}`
+        `${produto.nome} ${produto.codigo} ${produto.categoria} ${produto.grupo} ${produto.subgrupo} ${produto.opcao} ${produto.tipo}`
       );
 
       const bateBusca =
         !buscaNormalizada || textoProduto.includes(buscaNormalizada);
 
-      return bateCategoria && bateBusca;
+      return bateSubgrupo && bateBusca;
     });
-  }, [produtos, categoriaSelecionada, busca]);
+  }, [produtosDoCardPrincipal, subgruposDisponiveis, subgrupoSelecionado, busca]);
 
   const totalItens = useMemo(() => {
     return carrinho.reduce((total, item) => total + item.quantidade, 0);
@@ -625,6 +675,9 @@ export default function PdvPage() {
         codigo: produto.codigo,
         nome: produto.nome,
         categoria: produto.categoria,
+        grupo: produto.grupo,
+        subgrupo: produto.subgrupo,
+        opcao: produto.opcao,
         tipo: produto.tipo,
         precoUnitario: produto.preco,
         quantidade: 1,
@@ -653,6 +706,9 @@ export default function PdvPage() {
       codigo: pesoModal.produto.codigo,
       nome: pesoModal.produto.nome,
       categoria: pesoModal.produto.categoria,
+      grupo: pesoModal.produto.grupo,
+      subgrupo: pesoModal.produto.subgrupo,
+      opcao: pesoModal.produto.opcao,
       tipo: pesoModal.produto.tipo,
       precoUnitario: pesoModal.produto.preco,
       quantidade: peso,
@@ -1581,7 +1637,7 @@ export default function PdvPage() {
 
             <div>
               <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
-                Categorias
+                Cards principais
               </h2>
               <div className="mt-2 h-1 w-20 rounded bg-[#f97316]" />
             </div>
@@ -1593,7 +1649,10 @@ export default function PdvPage() {
                 return (
                   <button
                     key={categoria}
-                    onClick={() => setCategoriaSelecionada(categoria)}
+                    onClick={() => {
+                      setCategoriaSelecionada(categoria);
+                      setBusca("");
+                    }}
                     className={`min-h-[64px] rounded-lg border-2 px-3 py-3 text-sm font-bold uppercase transition ${
                       selecionada
                         ? "border-[#f97316] bg-[#111111] text-[#f97316]"
@@ -1606,9 +1665,38 @@ export default function PdvPage() {
               })}
             </div>
 
+            {subgruposDisponiveis.length > 0 && (
+              <div className="mt-6">
+                <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
+                  {categoriaSelecionada} — escolha uma opção
+                </h2>
+                <div className="mt-2 h-1 w-24 rounded bg-[#f97316]" />
+
+                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+                  {subgruposDisponiveis.map((subgrupo) => {
+                    const selecionado = subgrupo === subgrupoSelecionado;
+
+                    return (
+                      <button
+                        key={subgrupo}
+                        onClick={() => setSubgrupoSelecionado(subgrupo)}
+                        className={`min-h-[64px] rounded-lg border-2 px-3 py-3 text-sm font-bold uppercase transition ${
+                          selecionado
+                            ? "border-[#f97316] bg-[#111111] text-[#f97316]"
+                            : "border-[#f1d2ba] bg-white text-[#222222] hover:border-[#f97316] hover:bg-[#fff4eb]"
+                        }`}
+                      >
+                        {subgrupo}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mt-6">
               <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
-                Itens
+                Itens / opções
               </h2>
               <div className="mt-2 h-1 w-14 rounded bg-[#f97316]" />
             </div>
@@ -1638,13 +1726,22 @@ export default function PdvPage() {
                   no PDV.
                 </p>
               </div>
+            ) : subgruposDisponiveis.length > 0 && !subgrupoSelecionado && !busca.trim() ? (
+              <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
+                <h3 className="text-xl font-bold text-[#111111]">
+                  Escolha uma opção acima
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Primeiro clique em {categoriaSelecionada}, depois escolha o subgrupo para abrir os itens.
+                </p>
+              </div>
             ) : produtosFiltrados.length === 0 ? (
               <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
                 <h3 className="text-xl font-bold text-[#111111]">
-                  Nenhum item nesta categoria
+                  Nenhum item encontrado
                 </h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  Troque a categoria ou limpe a busca.
+                  Troque o card, escolha outro subgrupo ou limpe a busca.
                 </p>
               </div>
             ) : (
@@ -1667,6 +1764,11 @@ export default function PdvPage() {
                       <p className="text-[15px] font-extrabold uppercase leading-tight text-[#111111]">
                         {produto.nome}
                       </p>
+                      {(produto.subgrupo || produto.opcao) && (
+                        <p className="mt-1 text-[11px] font-semibold uppercase text-slate-500">
+                          {[produto.subgrupo, produto.opcao].filter(Boolean).join(" • ")}
+                        </p>
+                      )}
                       <p className="mt-2 text-xl font-black text-[#f97316]">
                         {money(produto.preco)}
                       </p>

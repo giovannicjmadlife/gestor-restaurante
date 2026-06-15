@@ -16,6 +16,8 @@ type GrupoProduto =
   | "Porção"
   | "Prato fixo"
   | "Bebida"
+  | "Bebida Sem Álcool"
+  | "Bebida Alcoólica"
   | "Sobremesa"
   | "Outros";
 
@@ -26,6 +28,8 @@ type Produto = {
   nome: string;
   categoria: CategoriaProduto;
   grupo: GrupoProduto;
+  subgrupo: string;
+  opcao: string;
   tipoPreco: TipoPreco;
   valor: number;
   controlarEstoque: boolean;
@@ -59,7 +63,7 @@ const gruposPorCategoria: Record<CategoriaProduto, GrupoProduto[]> = {
     "Sobremesa",
     "Outros",
   ],
-  Bebida: ["Bebida"],
+  Bebida: ["Bebida Sem Álcool", "Bebida", "Bebida Alcoólica"],
   Outros: ["Outros", "Sobremesa", "Porção", "Prato fixo"],
 };
 
@@ -100,6 +104,14 @@ function corrigirTipoPreco(tipoPreco?: string): TipoPreco {
   return tipoPreco === "Por quilo" ? "Por quilo" : "Preço fixo";
 }
 
+function textoSeguro(valor?: unknown) {
+  if (valor === null || valor === undefined) {
+    return "";
+  }
+
+  return String(valor).trim();
+}
+
 function lerProdutosStorage(): Produto[] {
   if (typeof window === "undefined") {
     return [];
@@ -130,6 +142,8 @@ function lerProdutosStorage(): Produto[] {
         nome: produto.nome || "Produto sem nome",
         categoria: categoriaCorrigida,
         grupo: grupoCorrigido,
+        subgrupo: textoSeguro(produto.subgrupo),
+        opcao: textoSeguro(produto.opcao),
         tipoPreco: corrigirTipoPreco(produto.tipoPreco),
         valor: Number(produto.valor || 0),
         controlarEstoque: Boolean(produto.controlarEstoque),
@@ -149,6 +163,8 @@ export default function ProdutosPage() {
   const [nome, setNome] = useState("");
   const [categoria, setCategoria] = useState<CategoriaProduto>("Almoço");
   const [grupo, setGrupo] = useState<GrupoProduto>("Marmitex");
+  const [subgrupo, setSubgrupo] = useState("");
+  const [opcao, setOpcao] = useState("");
   const [tipoPreco, setTipoPreco] = useState<TipoPreco>("Preço fixo");
   const [valor, setValor] = useState("");
   const [controlarEstoque, setControlarEstoque] = useState(false);
@@ -161,6 +177,7 @@ export default function ProdutosPage() {
   const [filtroGrupo, setFiltroGrupo] = useState<GrupoProduto | "Todos">(
     "Todos"
   );
+  const [filtroSubgrupo, setFiltroSubgrupo] = useState("Todos");
   const [busca, setBusca] = useState("");
 
   useEffect(() => {
@@ -193,6 +210,20 @@ export default function ProdutosPage() {
     return Array.from(gruposUnicos);
   }, []);
 
+  const todosSubgrupos = useMemo(() => {
+    const subgruposUnicos = new Set<string>();
+
+    produtos.forEach((produto) => {
+      if (produto.subgrupo.trim()) {
+        subgruposUnicos.add(produto.subgrupo.trim());
+      }
+    });
+
+    return Array.from(subgruposUnicos).sort((a, b) =>
+      a.localeCompare(b, "pt-BR")
+    );
+  }, [produtos]);
+
   const produtosFiltrados = useMemo(() => {
     return produtos.filter((produto) => {
       const passaCategoria =
@@ -201,17 +232,22 @@ export default function ProdutosPage() {
       const passaGrupo =
         filtroGrupo === "Todos" || produto.grupo === filtroGrupo;
 
+      const passaSubgrupo =
+        filtroSubgrupo === "Todos" || produto.subgrupo === filtroSubgrupo;
+
       const textoBusca = busca.trim().toLowerCase();
 
       const passaBusca =
         textoBusca.length === 0 ||
         produto.nome.toLowerCase().includes(textoBusca) ||
         produto.grupo.toLowerCase().includes(textoBusca) ||
+        produto.subgrupo.toLowerCase().includes(textoBusca) ||
+        produto.opcao.toLowerCase().includes(textoBusca) ||
         produto.categoria.toLowerCase().includes(textoBusca);
 
-      return passaCategoria && passaGrupo && passaBusca;
+      return passaCategoria && passaGrupo && passaSubgrupo && passaBusca;
     });
-  }, [produtos, filtroCategoria, filtroGrupo, busca]);
+  }, [produtos, filtroCategoria, filtroGrupo, filtroSubgrupo, busca]);
 
   const resumo = useMemo(() => {
     const totalProdutos = produtos.length;
@@ -273,6 +309,8 @@ export default function ProdutosPage() {
     setNome("");
     setCategoria("Almoço");
     setGrupo("Marmitex");
+    setSubgrupo("");
+    setOpcao("");
     setTipoPreco("Preço fixo");
     setValor("");
     setControlarEstoque(false);
@@ -285,6 +323,8 @@ export default function ProdutosPage() {
 
     const primeiroGrupo = gruposPorCategoria[novaCategoria][0];
     setGrupo(primeiroGrupo);
+    setSubgrupo("");
+    setOpcao("");
 
     if (novaCategoria === "Bebida") {
       setTipoPreco("Preço fixo");
@@ -338,6 +378,8 @@ export default function ProdutosPage() {
                 nome: nome.trim(),
                 categoria,
                 grupo,
+                subgrupo: subgrupo.trim(),
+                opcao: opcao.trim(),
                 tipoPreco,
                 valor: valorNumerico,
                 controlarEstoque,
@@ -356,6 +398,8 @@ export default function ProdutosPage() {
       nome: nome.trim(),
       categoria,
       grupo,
+      subgrupo: subgrupo.trim(),
+      opcao: opcao.trim(),
       tipoPreco,
       valor: valorNumerico,
       controlarEstoque,
@@ -372,6 +416,8 @@ export default function ProdutosPage() {
     setNome(produto.nome);
     setCategoria(produto.categoria);
     setGrupo(produto.grupo);
+    setSubgrupo(produto.subgrupo || "");
+    setOpcao(produto.opcao || "");
     setTipoPreco(produto.tipoPreco);
     setValor(String(produto.valor));
     setControlarEstoque(produto.controlarEstoque);
@@ -418,6 +464,8 @@ export default function ProdutosPage() {
         nome: "Almoço por quilo",
         categoria: "Almoço",
         grupo: "Por quilo",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Por quilo",
         valor: 60,
         controlarEstoque: false,
@@ -429,6 +477,8 @@ export default function ProdutosPage() {
         nome: "Almoço à vontade semana",
         categoria: "Almoço",
         grupo: "Almoço à vontade",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 35,
         controlarEstoque: false,
@@ -440,6 +490,8 @@ export default function ProdutosPage() {
         nome: "Almoço à vontade fim de semana",
         categoria: "Almoço",
         grupo: "Almoço à vontade",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 40,
         controlarEstoque: false,
@@ -451,6 +503,8 @@ export default function ProdutosPage() {
         nome: "Marmitex com churrasco",
         categoria: "Almoço",
         grupo: "Marmitex",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 25,
         controlarEstoque: false,
@@ -462,6 +516,8 @@ export default function ProdutosPage() {
         nome: "Marmitex sem churrasco",
         categoria: "Almoço",
         grupo: "Marmitex",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 23,
         controlarEstoque: false,
@@ -473,6 +529,8 @@ export default function ProdutosPage() {
         nome: "Somente mistura",
         categoria: "Almoço",
         grupo: "Mistura",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 18,
         controlarEstoque: false,
@@ -484,6 +542,8 @@ export default function ProdutosPage() {
         nome: "Jantinha",
         categoria: "Janta",
         grupo: "Jantinha",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 25,
         controlarEstoque: false,
@@ -495,6 +555,8 @@ export default function ProdutosPage() {
         nome: "Pizza calabresa",
         categoria: "Janta",
         grupo: "Pizza",
+        subgrupo: "Pizza de Sal",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 65,
         controlarEstoque: false,
@@ -506,6 +568,8 @@ export default function ProdutosPage() {
         nome: "Sanduíche artesanal",
         categoria: "Janta",
         grupo: "Sanduíche",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 28,
         controlarEstoque: false,
@@ -517,6 +581,8 @@ export default function ProdutosPage() {
         nome: "Porção de batata",
         categoria: "Janta",
         grupo: "Porção",
+        subgrupo: "",
+        opcao: "",
         tipoPreco: "Preço fixo",
         valor: 30,
         controlarEstoque: false,
@@ -527,7 +593,9 @@ export default function ProdutosPage() {
         id: criarId(),
         nome: "Coca lata",
         categoria: "Bebida",
-        grupo: "Bebida",
+        grupo: "Bebida Sem Álcool",
+        subgrupo: "Coca-Cola",
+        opcao: "Lata 350ml",
         tipoPreco: "Preço fixo",
         valor: 6,
         controlarEstoque: true,
@@ -538,7 +606,9 @@ export default function ProdutosPage() {
         id: criarId(),
         nome: "Água sem gás",
         categoria: "Bebida",
-        grupo: "Bebida",
+        grupo: "Bebida Sem Álcool",
+        subgrupo: "Água",
+        opcao: "Sem gás",
         tipoPreco: "Preço fixo",
         valor: 3.5,
         controlarEstoque: true,
@@ -789,6 +859,35 @@ export default function ProdutosPage() {
 
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Subgrupo / card que abre depois
+                    </label>
+                    <input
+                      type="text"
+                      value={subgrupo}
+                      onChange={(event) => setSubgrupo(event.target.value)}
+                      placeholder="Ex: Pizza de Sal, Pizza Doce, Coca-Cola"
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Exemplo: Pizza &gt; Pizza de Sal ou Bebida Sem Álcool &gt; Coca-Cola.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Opção / tamanho / variação
+                    </label>
+                    <input
+                      type="text"
+                      value={opcao}
+                      onChange={(event) => setOpcao(event.target.value)}
+                      placeholder="Ex: Grande, Broto, Lata 350ml, 2 litros"
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
                       Tipo de preço
                     </label>
                     <select
@@ -940,7 +1039,7 @@ export default function ProdutosPage() {
                   </p>
                 </div>
 
-                <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
                       Buscar
@@ -997,6 +1096,24 @@ export default function ProdutosPage() {
                       ))}
                     </select>
                   </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Subgrupo
+                    </label>
+                    <select
+                      value={filtroSubgrupo}
+                      onChange={(event) => setFiltroSubgrupo(event.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                    >
+                      <option value="Todos">Todos</option>
+                      {todosSubgrupos.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {produtosFiltrados.length === 0 ? (
@@ -1010,12 +1127,14 @@ export default function ProdutosPage() {
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1000px] border-collapse">
+                    <table className="w-full min-w-[1180px] border-collapse">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
                           <th className="px-3 py-3">Item</th>
                           <th className="px-3 py-3">Categoria</th>
                           <th className="px-3 py-3">Tipo</th>
+                          <th className="px-3 py-3">Subgrupo</th>
+                          <th className="px-3 py-3">Opção</th>
                           <th className="px-3 py-3">Preço</th>
                           <th className="px-3 py-3 text-right">Valor</th>
                           <th className="px-3 py-3 text-right">Estoque</th>
@@ -1052,6 +1171,14 @@ export default function ProdutosPage() {
 
                             <td className="px-3 py-4 text-slate-700">
                               {produto.grupo}
+                            </td>
+
+                            <td className="px-3 py-4 text-slate-700">
+                              {produto.subgrupo || "-"}
+                            </td>
+
+                            <td className="px-3 py-4 text-slate-700">
+                              {produto.opcao || "-"}
                             </td>
 
                             <td className="px-3 py-4 text-slate-700">
