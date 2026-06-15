@@ -107,14 +107,9 @@ const LS_COMANDA_CONSUMOS = "gestor-restaurante-comanda-consumos";
 const LS_MESAS = "gestor-restaurante-mesas";
 const LS_COMANDAS = "gestor-restaurante-comandas";
 
-const CATEGORIAS_PADRAO = [
-  "Almoço",
-  "Janta",
-  "Bebida",
-  "Pizza",
-  "Porções",
-  "Outros",
-];
+const CATEGORIAS_PDV = ["Almoço", "Janta", "Bebidas", "Sorvete", "Outros"];
+const tiposPizza = ["Pizza de Sal", "Pizza Doce"];
+const tamanhosPizza = ["Grande", "Pequeno"];
 
 function uid() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -348,7 +343,9 @@ export default function PdvPage() {
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
 
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("");
+  const [grupoSelecionado, setGrupoSelecionado] = useState("");
   const [subgrupoSelecionado, setSubgrupoSelecionado] = useState("");
+  const [opcaoSelecionada, setOpcaoSelecionada] = useState("");
   const [busca, setBusca] = useState("");
   const [carrinho, setCarrinho] = useState<CartItem[]>([]);
 
@@ -441,32 +438,45 @@ export default function PdvPage() {
 
   const caixaAberto = caixaAtual?.status === "Aberto";
 
-  function obterCardPrincipal(produto: ProdutoView) {
-    return produto.grupo || produto.categoria || "Outros";
+  function categoriaPdvDoProduto(produto: ProdutoView) {
+    const categoriaProduto = normalizeText(produto.categoria);
+    const grupoProduto = normalizeText(produto.grupo);
+
+    if (categoriaProduto.includes("almoco") || grupoProduto.includes("almoco")) {
+      return "Almoço";
+    }
+
+    if (
+      categoriaProduto.includes("janta") ||
+      categoriaProduto.includes("pizza") ||
+      grupoProduto.includes("pizza")
+    ) {
+      return "Janta";
+    }
+
+    if (categoriaProduto.includes("bebida") || grupoProduto.includes("bebida")) {
+      return "Bebidas";
+    }
+
+    if (
+      categoriaProduto.includes("sorvete") ||
+      grupoProduto.includes("sorvete") ||
+      grupoProduto.includes("acai")
+    ) {
+      return "Sorvete";
+    }
+
+    return "Outros";
   }
 
   function produtoPertenceAoCard(produto: ProdutoView, card: string) {
     if (!card) return true;
-
-    const cardNormalizado = normalizeText(card);
-    const grupoProduto = normalizeText(produto.grupo);
-    const categoriaProduto = normalizeText(produto.categoria);
-
-    return grupoProduto === cardNormalizado || categoriaProduto === cardNormalizado;
+    return categoriaPdvDoProduto(produto) === card;
   }
 
   const categorias = useMemo(() => {
-    const lista = produtos
-      .map((produto) => obterCardPrincipal(produto))
-      .filter(Boolean)
-      .map((categoria) => categoria.trim());
-
-    const unicas = Array.from(new Set(lista));
-
-    if (unicas.length === 0) return CATEGORIAS_PADRAO;
-
-    return unicas.sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [produtos]);
+    return CATEGORIAS_PDV;
+  }, []);
 
   useEffect(() => {
     if (!categoriaSelecionada && categorias.length > 0) {
@@ -480,38 +490,136 @@ export default function PdvPage() {
     );
   }, [produtos, categoriaSelecionada]);
 
-  const subgruposDisponiveis = useMemo(() => {
+  const gruposDisponiveis = useMemo(() => {
     const lista = produtosDoCardPrincipal
+      .map((produto) => produto.grupo.trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(lista)).sort((a, b) => {
+      if (a === "Pizza") return -1;
+      if (b === "Pizza") return 1;
+      return a.localeCompare(b, "pt-BR");
+    });
+  }, [produtosDoCardPrincipal]);
+
+  const produtosDoGrupoSelecionado = useMemo(() => {
+    if (!grupoSelecionado) {
+      return produtosDoCardPrincipal;
+    }
+
+    return produtosDoCardPrincipal.filter(
+      (produto) => normalizeText(produto.grupo) === normalizeText(grupoSelecionado)
+    );
+  }, [produtosDoCardPrincipal, grupoSelecionado]);
+
+  const subgruposDisponiveis = useMemo(() => {
+    const lista = produtosDoGrupoSelecionado
       .map((produto) => produto.subgrupo.trim())
       .filter(Boolean);
 
-    return Array.from(new Set(lista)).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [produtosDoCardPrincipal]);
+    const unicos = Array.from(new Set(lista));
+
+    if (grupoSelecionado === "Pizza") {
+      return tiposPizza.filter((tipo) => unicos.includes(tipo));
+    }
+
+    return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [produtosDoGrupoSelecionado, grupoSelecionado]);
+
+  const produtosDoSubgrupoSelecionado = useMemo(() => {
+    if (!subgrupoSelecionado) {
+      return produtosDoGrupoSelecionado;
+    }
+
+    return produtosDoGrupoSelecionado.filter(
+      (produto) =>
+        normalizeText(produto.subgrupo) === normalizeText(subgrupoSelecionado)
+    );
+  }, [produtosDoGrupoSelecionado, subgrupoSelecionado]);
+
+  const opcoesDisponiveis = useMemo(() => {
+    const lista = produtosDoSubgrupoSelecionado
+      .map((produto) => produto.opcao.trim())
+      .filter(Boolean);
+
+    const unicos = Array.from(new Set(lista));
+
+    if (grupoSelecionado === "Pizza") {
+      return tamanhosPizza.filter((tamanho) => unicos.includes(tamanho));
+    }
+
+    return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [produtosDoSubgrupoSelecionado, grupoSelecionado]);
+
+  useEffect(() => {
+    setGrupoSelecionado("");
+    setSubgrupoSelecionado("");
+    setOpcaoSelecionada("");
+  }, [categoriaSelecionada]);
 
   useEffect(() => {
     setSubgrupoSelecionado("");
-  }, [categoriaSelecionada]);
+    setOpcaoSelecionada("");
+  }, [grupoSelecionado]);
+
+  useEffect(() => {
+    setOpcaoSelecionada("");
+  }, [subgrupoSelecionado]);
 
   const produtosFiltrados = useMemo(() => {
     const buscaNormalizada = normalizeText(busca);
-    const temSubgrupos = subgruposDisponiveis.length > 0;
+    const buscando = Boolean(buscaNormalizada);
 
     return produtosDoCardPrincipal.filter((produto) => {
-      const bateSubgrupo =
-        !temSubgrupos ||
-        !subgrupoSelecionado ||
-        normalizeText(produto.subgrupo) === normalizeText(subgrupoSelecionado);
+      if (!buscando && gruposDisponiveis.length > 0 && !grupoSelecionado) {
+        return false;
+      }
+
+      if (
+        grupoSelecionado &&
+        normalizeText(produto.grupo) !== normalizeText(grupoSelecionado)
+      ) {
+        return false;
+      }
+
+      if (!buscando && subgruposDisponiveis.length > 0 && !subgrupoSelecionado) {
+        return false;
+      }
+
+      if (
+        subgrupoSelecionado &&
+        normalizeText(produto.subgrupo) !== normalizeText(subgrupoSelecionado)
+      ) {
+        return false;
+      }
+
+      if (!buscando && opcoesDisponiveis.length > 0 && !opcaoSelecionada) {
+        return false;
+      }
+
+      if (
+        opcaoSelecionada &&
+        normalizeText(produto.opcao) !== normalizeText(opcaoSelecionada)
+      ) {
+        return false;
+      }
 
       const textoProduto = normalizeText(
         `${produto.nome} ${produto.codigo} ${produto.categoria} ${produto.grupo} ${produto.subgrupo} ${produto.opcao} ${produto.tipo}`
       );
 
-      const bateBusca =
-        !buscaNormalizada || textoProduto.includes(buscaNormalizada);
-
-      return bateSubgrupo && bateBusca;
+      return !buscaNormalizada || textoProduto.includes(buscaNormalizada);
     });
-  }, [produtosDoCardPrincipal, subgruposDisponiveis, subgrupoSelecionado, busca]);
+  }, [
+    produtosDoCardPrincipal,
+    gruposDisponiveis,
+    grupoSelecionado,
+    subgruposDisponiveis,
+    subgrupoSelecionado,
+    opcoesDisponiveis,
+    opcaoSelecionada,
+    busca,
+  ]);
 
   const totalItens = useMemo(() => {
     return carrinho.reduce((total, item) => total + item.quantidade, 0);
@@ -1637,12 +1745,12 @@ export default function PdvPage() {
 
             <div>
               <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
-                Cards principais
+                Categorias
               </h2>
               <div className="mt-2 h-1 w-20 rounded bg-[#f97316]" />
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5 xl:grid-cols-5">
               {categorias.map((categoria) => {
                 const selecionada = categoria === categoriaSelecionada;
 
@@ -1665,10 +1773,39 @@ export default function PdvPage() {
               })}
             </div>
 
-            {subgruposDisponiveis.length > 0 && (
+            {gruposDisponiveis.length > 0 && (
               <div className="mt-6">
                 <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
-                  {categoriaSelecionada} — escolha uma opção
+                  {categoriaSelecionada} — escolha o tipo
+                </h2>
+                <div className="mt-2 h-1 w-24 rounded bg-[#f97316]" />
+
+                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+                  {gruposDisponiveis.map((grupo) => {
+                    const selecionado = grupo === grupoSelecionado;
+
+                    return (
+                      <button
+                        key={grupo}
+                        onClick={() => setGrupoSelecionado(grupo)}
+                        className={`min-h-[64px] rounded-lg border-2 px-3 py-3 text-sm font-bold uppercase transition ${
+                          selecionado
+                            ? "border-[#f97316] bg-[#111111] text-[#f97316]"
+                            : "border-[#f1d2ba] bg-white text-[#222222] hover:border-[#f97316] hover:bg-[#fff4eb]"
+                        }`}
+                      >
+                        {grupo}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {grupoSelecionado && subgruposDisponiveis.length > 0 && (
+              <div className="mt-6">
+                <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
+                  {grupoSelecionado === "Pizza" ? "Categoria da pizza" : `${grupoSelecionado} — escolha uma opção`}
                 </h2>
                 <div className="mt-2 h-1 w-24 rounded bg-[#f97316]" />
 
@@ -1687,6 +1824,35 @@ export default function PdvPage() {
                         }`}
                       >
                         {subgrupo}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {subgrupoSelecionado && opcoesDisponiveis.length > 0 && (
+              <div className="mt-6">
+                <h2 className="text-lg font-extrabold uppercase tracking-wide text-[#111111]">
+                  {grupoSelecionado === "Pizza" ? "Tamanho da pizza" : `${subgrupoSelecionado} — escolha a variação`}
+                </h2>
+                <div className="mt-2 h-1 w-24 rounded bg-[#f97316]" />
+
+                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+                  {opcoesDisponiveis.map((opcao) => {
+                    const selecionada = opcao === opcaoSelecionada;
+
+                    return (
+                      <button
+                        key={opcao}
+                        onClick={() => setOpcaoSelecionada(opcao)}
+                        className={`min-h-[64px] rounded-lg border-2 px-3 py-3 text-sm font-bold uppercase transition ${
+                          selecionada
+                            ? "border-[#f97316] bg-[#111111] text-[#f97316]"
+                            : "border-[#f1d2ba] bg-white text-[#222222] hover:border-[#f97316] hover:bg-[#fff4eb]"
+                        }`}
+                      >
+                        {opcao}
                       </button>
                     );
                   })}
@@ -1726,13 +1892,31 @@ export default function PdvPage() {
                   no PDV.
                 </p>
               </div>
+            ) : gruposDisponiveis.length > 0 && !grupoSelecionado && !busca.trim() ? (
+              <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
+                <h3 className="text-xl font-bold text-[#111111]">
+                  Escolha um tipo acima
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Primeiro clique em {categoriaSelecionada}, depois escolha o tipo para abrir os próximos cards.
+                </p>
+              </div>
             ) : subgruposDisponiveis.length > 0 && !subgrupoSelecionado && !busca.trim() ? (
               <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
                 <h3 className="text-xl font-bold text-[#111111]">
                   Escolha uma opção acima
                 </h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  Primeiro clique em {categoriaSelecionada}, depois escolha o subgrupo para abrir os itens.
+                  Escolha {grupoSelecionado === "Pizza" ? "Pizza de Sal ou Pizza Doce" : "um subgrupo"} para abrir os itens.
+                </p>
+              </div>
+            ) : opcoesDisponiveis.length > 0 && !opcaoSelecionada && !busca.trim() ? (
+              <div className="mt-10 rounded-xl border border-[#f1d2ba] bg-white p-6 shadow-sm">
+                <h3 className="text-xl font-bold text-[#111111]">
+                  Escolha o tamanho acima
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Escolha {grupoSelecionado === "Pizza" ? "Grande ou Pequeno" : "uma variação"} para liberar os itens cadastrados.
                 </p>
               </div>
             ) : produtosFiltrados.length === 0 ? (

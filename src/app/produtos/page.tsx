@@ -3,7 +3,7 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-type CategoriaProduto = "Almoço" | "Janta" | "Bebida" | "Outros";
+type CategoriaProduto = "Almoço" | "Janta" | "Bebida" | "Sorvete" | "Outros";
 
 type GrupoProduto =
   | "Por quilo"
@@ -18,6 +18,8 @@ type GrupoProduto =
   | "Bebida"
   | "Bebida Sem Álcool"
   | "Bebida Alcoólica"
+  | "Sorvete"
+  | "Açaí"
   | "Sobremesa"
   | "Outros";
 
@@ -43,7 +45,7 @@ type ProdutoStorage = Partial<Produto> & {
 
 const STORAGE_KEY = "gestor-restaurante-produtos";
 
-const categorias: CategoriaProduto[] = ["Almoço", "Janta", "Bebida", "Outros"];
+const categorias: CategoriaProduto[] = ["Almoço", "Janta", "Bebida", "Sorvete", "Outros"];
 
 const gruposPorCategoria: Record<CategoriaProduto, GrupoProduto[]> = {
   Almoço: [
@@ -64,10 +66,13 @@ const gruposPorCategoria: Record<CategoriaProduto, GrupoProduto[]> = {
     "Outros",
   ],
   Bebida: ["Bebida Sem Álcool", "Bebida", "Bebida Alcoólica"],
+  Sorvete: ["Sorvete", "Açaí", "Outros"],
   Outros: ["Outros", "Sobremesa", "Porção", "Prato fixo"],
 };
 
 const tiposPreco: TipoPreco[] = ["Preço fixo", "Por quilo"];
+const tiposPizza = ["Pizza de Sal", "Pizza Doce"];
+const tamanhosPizza = ["Grande", "Pequeno"];
 
 function criarId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -80,10 +85,19 @@ function formatarMoeda(valor: number) {
   });
 }
 
+function rotuloCategoria(categoria: CategoriaProduto) {
+  return categoria === "Bebida" ? "Bebidas" : categoria;
+}
+
+function produtoEhPizza(categoria: CategoriaProduto, grupo: GrupoProduto) {
+  return categoria === "Janta" && grupo === "Pizza";
+}
+
 function corrigirCategoria(categoria?: string): CategoriaProduto {
   if (categoria === "Almoço") return "Almoço";
   if (categoria === "Janta") return "Janta";
-  if (categoria === "Bebida") return "Bebida";
+  if (categoria === "Bebida" || categoria === "Bebidas") return "Bebida";
+  if (categoria === "Sorvete") return "Sorvete";
   return "Outros";
 }
 
@@ -323,10 +337,16 @@ export default function ProdutosPage() {
 
     const primeiroGrupo = gruposPorCategoria[novaCategoria][0];
     setGrupo(primeiroGrupo);
-    setSubgrupo("");
-    setOpcao("");
 
-    if (novaCategoria === "Bebida") {
+    if (produtoEhPizza(novaCategoria, primeiroGrupo)) {
+      setSubgrupo(tiposPizza[0]);
+      setOpcao(tamanhosPizza[0]);
+    } else {
+      setSubgrupo("");
+      setOpcao("");
+    }
+
+    if (novaCategoria === "Bebida" || novaCategoria === "Sorvete") {
       setTipoPreco("Preço fixo");
       setControlarEstoque(true);
       return;
@@ -344,6 +364,14 @@ export default function ProdutosPage() {
 
   function ajustarTipoPorGrupo(novoGrupo: GrupoProduto) {
     setGrupo(novoGrupo);
+
+    if (produtoEhPizza(categoria, novoGrupo)) {
+      setSubgrupo((valorAtual) => valorAtual || tiposPizza[0]);
+      setOpcao((valorAtual) => valorAtual || tamanhosPizza[0]);
+    } else {
+      setSubgrupo("");
+      setOpcao("");
+    }
 
     if (novoGrupo === "Por quilo") {
       setTipoPreco("Por quilo");
@@ -369,6 +397,10 @@ export default function ProdutosPage() {
       return;
     }
 
+    const itemEhPizza = produtoEhPizza(categoria, grupo);
+    const subgrupoFinal = itemEhPizza ? subgrupo || tiposPizza[0] : subgrupo.trim();
+    const opcaoFinal = itemEhPizza ? opcao || tamanhosPizza[0] : opcao.trim();
+
     if (editandoId) {
       setProdutos((listaAtual) =>
         listaAtual.map((produto) =>
@@ -378,8 +410,8 @@ export default function ProdutosPage() {
                 nome: nome.trim(),
                 categoria,
                 grupo,
-                subgrupo: subgrupo.trim(),
-                opcao: opcao.trim(),
+                subgrupo: subgrupoFinal,
+                opcao: opcaoFinal,
                 tipoPreco,
                 valor: valorNumerico,
                 controlarEstoque,
@@ -398,8 +430,8 @@ export default function ProdutosPage() {
       nome: nome.trim(),
       categoria,
       grupo,
-      subgrupo: subgrupo.trim(),
-      opcao: opcao.trim(),
+      subgrupo: subgrupoFinal,
+      opcao: opcaoFinal,
       tipoPreco,
       valor: valorNumerico,
       controlarEstoque,
@@ -416,8 +448,8 @@ export default function ProdutosPage() {
     setNome(produto.nome);
     setCategoria(produto.categoria);
     setGrupo(produto.grupo);
-    setSubgrupo(produto.subgrupo || "");
-    setOpcao(produto.opcao || "");
+    setSubgrupo(produtoEhPizza(produto.categoria, produto.grupo) ? produto.subgrupo || tiposPizza[0] : produto.subgrupo || "");
+    setOpcao(produtoEhPizza(produto.categoria, produto.grupo) ? produto.opcao || tamanhosPizza[0] : produto.opcao || "");
     setTipoPreco(produto.tipoPreco);
     setValor(String(produto.valor));
     setControlarEstoque(produto.controlarEstoque);
@@ -552,11 +584,11 @@ export default function ProdutosPage() {
       },
       {
         id: criarId(),
-        nome: "Pizza calabresa",
+        nome: "Pizza calabresa grande",
         categoria: "Janta",
         grupo: "Pizza",
         subgrupo: "Pizza de Sal",
-        opcao: "",
+        opcao: "Grande",
         tipoPreco: "Preço fixo",
         valor: 65,
         controlarEstoque: false,
@@ -827,14 +859,13 @@ export default function ProdutosPage() {
                     >
                       {categorias.map((item) => (
                         <option key={item} value={item}>
-                          {item}
+                          {rotuloCategoria(item)}
                         </option>
                       ))}
                     </select>
 
                     <p className="mt-2 text-xs text-slate-500">
-                      Almoço e Janta são categorias principais. Bebida aparece
-                      nas duas vendas.
+                      Almoço, Janta, Bebidas, Sorvete e Outros aparecem como cards principais no PDV.
                     </p>
                   </div>
 
@@ -857,34 +888,80 @@ export default function ProdutosPage() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">
-                      Subgrupo / card que abre depois
-                    </label>
-                    <input
-                      type="text"
-                      value={subgrupo}
-                      onChange={(event) => setSubgrupo(event.target.value)}
-                      placeholder="Ex: Pizza de Sal, Pizza Doce, Coca-Cola"
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
-                    />
-                    <p className="mt-2 text-xs text-slate-500">
-                      Exemplo: Pizza &gt; Pizza de Sal ou Bebida Sem Álcool &gt; Coca-Cola.
-                    </p>
-                  </div>
+                  {produtoEhPizza(categoria, grupo) ? (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Tipo da pizza
+                        </label>
+                        <select
+                          value={subgrupo || tiposPizza[0]}
+                          onChange={(event) => setSubgrupo(event.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                        >
+                          {tiposPizza.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Para pizza, trabalhamos somente com Pizza de Sal ou Pizza Doce.
+                        </p>
+                      </div>
 
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">
-                      Opção / tamanho / variação
-                    </label>
-                    <input
-                      type="text"
-                      value={opcao}
-                      onChange={(event) => setOpcao(event.target.value)}
-                      placeholder="Ex: Grande, Broto, Lata 350ml, 2 litros"
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
-                    />
-                  </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Tamanho da pizza
+                        </label>
+                        <select
+                          value={opcao || tamanhosPizza[0]}
+                          onChange={(event) => setOpcao(event.target.value)}
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                        >
+                          {tamanhosPizza.map((item) => (
+                            <option key={item} value={item}>
+                              {item}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Para pizza, os tamanhos disponíveis são apenas Grande e Pequeno.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Subgrupo / card que abre depois
+                        </label>
+                        <input
+                          type="text"
+                          value={subgrupo}
+                          onChange={(event) => setSubgrupo(event.target.value)}
+                          placeholder="Ex: Coca-Cola, Guaraná, Sorvete de massa"
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                        />
+                        <p className="mt-2 text-xs text-slate-500">
+                          Exemplo: Bebida Sem Álcool &gt; Coca-Cola ou Sorvete &gt; Massa.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Opção / tamanho / variação
+                        </label>
+                        <input
+                          type="text"
+                          value={opcao}
+                          onChange={(event) => setOpcao(event.target.value)}
+                          placeholder="Ex: Lata 350ml, 2 litros, 1 bola"
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -1069,7 +1146,7 @@ export default function ProdutosPage() {
                       <option value="Todas">Todas</option>
                       {categorias.map((item) => (
                         <option key={item} value={item}>
-                          {item}
+                          {rotuloCategoria(item)}
                         </option>
                       ))}
                     </select>
@@ -1165,7 +1242,7 @@ export default function ProdutosPage() {
                                     : "bg-slate-100 text-slate-700"
                                 }`}
                               >
-                                {produto.categoria}
+                                {rotuloCategoria(produto.categoria)}
                               </span>
                             </td>
 
