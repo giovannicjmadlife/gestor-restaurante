@@ -111,8 +111,15 @@ const LS_MESAS = "gestor-restaurante-mesas";
 const LS_COMANDAS = "gestor-restaurante-comandas";
 
 const CATEGORIAS_PDV = ["Almoço", "Janta", "Bebidas", "Sorvete", "Outros"];
-const tiposPizza = ["Pizza de Sal", "Pizza Doce"];
-const tamanhosPizza = ["Grande", "Pequeno"];
+
+const ORDEM_SUBGRUPOS_PIZZA = [
+  "Pizza de Sal",
+  "Pizza Doce",
+  "Pizza Pequena",
+  "Pizza Gigante",
+];
+
+const ORDEM_TAMANHOS_PIZZA = ["Grande", "Média", "Pequena", "Única"];
 
 function uid() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -207,6 +214,56 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function normalizarSubgrupoPizza(subgrupo: string, nome = "") {
+  const texto = normalizeText(`${subgrupo} ${nome}`);
+
+  if (texto.includes("gigante") || texto.includes("gg quadrada")) {
+    return "Pizza Gigante";
+  }
+
+  if (texto.includes("pizza pequena") || texto.includes("pizza p")) {
+    return "Pizza Pequena";
+  }
+
+  if (texto.includes("doce")) {
+    return "Pizza Doce";
+  }
+
+  if (texto.includes("sal")) {
+    return "Pizza de Sal";
+  }
+
+  return subgrupo.trim();
+}
+
+function normalizarOpcaoPizza(opcao: string) {
+  const texto = normalizeText(opcao);
+
+  if (!texto || texto === "-") return "";
+  if (texto.includes("media")) return "Média";
+  if (texto.includes("grande")) return "Grande";
+  if (texto.includes("pequena") || texto === "p" || texto.includes("pequeno")) {
+    return "Pequena";
+  }
+  if (texto.includes("unica")) return "Única";
+
+  return opcao.trim();
+}
+
+function ordenarPorOrdemPreferencial(lista: string[], ordem: string[]) {
+  return [...lista].sort((a, b) => {
+    const aNormalizado = normalizeText(a);
+    const bNormalizado = normalizeText(b);
+    const ia = ordem.findIndex((item) => normalizeText(item) === aNormalizado);
+    const ib = ordem.findIndex((item) => normalizeText(item) === bNormalizado);
+    const pa = ia === -1 ? 999 : ia;
+    const pb = ib === -1 ? 999 : ib;
+
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b, "pt-BR");
+  });
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -239,19 +296,24 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
     asString(raw.categoria) ||
     "Outros";
 
-  const subgrupo =
+  let subgrupo =
     asString(raw.subgrupo) ||
     asString(raw.subcategoria) ||
     asString(raw.marca) ||
     asString(raw.linha) ||
     "";
 
-  const opcao =
+  let opcao =
     asString(raw.opcao) ||
     asString(raw.variacao) ||
     asString(raw.tamanho) ||
     asString(raw.unidadeOpcao) ||
     "";
+
+  if (normalizeText(grupo).includes("pizza")) {
+    subgrupo = normalizarSubgrupoPizza(subgrupo, nome);
+    opcao = normalizarOpcaoPizza(opcao);
+  }
 
   const tipo = [grupo, subgrupo, opcao].filter(Boolean).join(" > ");
 
@@ -536,8 +598,8 @@ export default function PdvPage() {
 
     const unicos = Array.from(new Set(lista));
 
-    if (grupoSelecionado === "Pizza") {
-      return tiposPizza.filter((tipo) => unicos.includes(tipo));
+    if (normalizeText(grupoSelecionado) === "pizza") {
+      return ordenarPorOrdemPreferencial(unicos, ORDEM_SUBGRUPOS_PIZZA);
     }
 
     return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -561,8 +623,8 @@ export default function PdvPage() {
 
     const unicos = Array.from(new Set(lista));
 
-    if (grupoSelecionado === "Pizza") {
-      return tamanhosPizza.filter((tamanho) => unicos.includes(tamanho));
+    if (normalizeText(grupoSelecionado) === "pizza") {
+      return ordenarPorOrdemPreferencial(unicos, ORDEM_TAMANHOS_PIZZA);
     }
 
     return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -1953,7 +2015,9 @@ export default function PdvPage() {
               </div>
             )}
 
-            {grupoSelecionado === "Pizza" && subgrupoSelecionado && opcaoSelecionada && (
+            {grupoSelecionado === "Pizza" &&
+              ["pizza de sal", "pizza doce"].includes(normalizeText(subgrupoSelecionado)) &&
+              opcaoSelecionada && (
               <div className="mt-6 rounded-xl border-2 border-[#f1d2ba] bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -2049,7 +2113,7 @@ export default function PdvPage() {
                   Escolha uma opção acima
                 </h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  Escolha {grupoSelecionado === "Pizza" ? "Pizza de Sal ou Pizza Doce" : "um subgrupo"} para abrir os itens.
+                  Escolha {grupoSelecionado === "Pizza" ? "Pizza de Sal, Pizza Doce, Pizza Pequena ou Pizza Gigante" : "um subgrupo"} para abrir os itens.
                 </p>
               </div>
             ) : opcoesDisponiveis.length > 0 && !opcaoSelecionada && !busca.trim() ? (
@@ -2058,7 +2122,7 @@ export default function PdvPage() {
                   Escolha o tamanho acima
                 </h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  Escolha {grupoSelecionado === "Pizza" ? "Grande ou Pequeno" : "uma variação"} para liberar os itens cadastrados.
+                  Escolha {grupoSelecionado === "Pizza" ? "Grande, Média ou Pequena" : "uma variação"} para liberar os itens cadastrados.
                 </p>
               </div>
             ) : produtosFiltrados.length === 0 ? (

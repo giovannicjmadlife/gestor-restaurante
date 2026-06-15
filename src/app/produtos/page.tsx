@@ -41,6 +41,12 @@ type Produto = {
 
 type ProdutoStorage = Partial<Produto> & {
   disponibilidade?: string;
+  categoriaPrincipal?: string;
+  tipo?: string;
+  subcategoria?: string;
+  tamanho?: string;
+  preco?: number | string;
+  precoVenda?: number | string;
 };
 
 const STORAGE_KEY = "gestor-restaurante-produtos";
@@ -71,8 +77,15 @@ const gruposPorCategoria: Record<CategoriaProduto, GrupoProduto[]> = {
 };
 
 const tiposPreco: TipoPreco[] = ["Preço fixo", "Por quilo"];
-const tiposPizza = ["Pizza de Sal", "Pizza Doce"];
-const tamanhosPizza = ["Grande", "Pequeno"];
+
+// Estrutura correta das pizzas no restaurante:
+// - Pizza de Sal e Pizza Doce têm sabores e valores diferentes por tamanho.
+// - Pizza Pequena tem preço único, sem escolher sabor.
+// - Pizza Gigante tem opções únicas, sem escolher sabor.
+const tiposPizza = ["Pizza de Sal", "Pizza Doce", "Pizza Pequena", "Pizza Gigante"];
+const tamanhosPizzaSabores = ["Grande", "Média"];
+const tamanhosPizzaUnica = ["Única"];
+const tamanhosPizza = ["Grande", "Média", "Pequeno", "Única"];
 
 function criarId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -91,6 +104,79 @@ function rotuloCategoria(categoria: CategoriaProduto) {
 
 function produtoEhPizza(categoria: CategoriaProduto, grupo: GrupoProduto) {
   return categoria === "Janta" && grupo === "Pizza";
+}
+
+function normalizarTexto(valor?: unknown) {
+  return String(valor || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function corrigirSubgrupoPizza(valor?: string) {
+  const texto = normalizarTexto(valor);
+
+  if (texto.includes("gigante") || texto.includes("gg")) {
+    return "Pizza Gigante";
+  }
+
+  if (
+    texto.includes("pequena") ||
+    texto.includes("pizza p") ||
+    texto === "p"
+  ) {
+    return "Pizza Pequena";
+  }
+
+  if (texto.includes("doce")) {
+    return "Pizza Doce";
+  }
+
+  if (texto.includes("sal")) {
+    return "Pizza de Sal";
+  }
+
+  return "Pizza de Sal";
+}
+
+function pizzaTemTamanhoUnico(tipoPizza: string) {
+  const tipoNormalizado = normalizarTexto(tipoPizza);
+
+  return (
+    tipoNormalizado === normalizarTexto("Pizza Pequena") ||
+    tipoNormalizado === normalizarTexto("Pizza Gigante")
+  );
+}
+
+function tamanhosDisponiveisDaPizza(tipoPizza: string) {
+  if (pizzaTemTamanhoUnico(tipoPizza)) {
+    return tamanhosPizzaUnica;
+  }
+
+  return tamanhosPizzaSabores;
+}
+
+function corrigirOpcaoPizza(tipoPizza: string, valor?: string) {
+  if (pizzaTemTamanhoUnico(tipoPizza)) {
+    return "Única";
+  }
+
+  const texto = normalizarTexto(valor);
+
+  if (texto.includes("media") || texto.includes("m")) {
+    return "Média";
+  }
+
+  if (texto.includes("grande") || texto === "g") {
+    return "Grande";
+  }
+
+  if (texto.includes("pequeno") || texto.includes("pequena") || texto === "p") {
+    return "Pequeno";
+  }
+
+  return "Grande";
 }
 
 function corrigirCategoria(categoria?: string): CategoriaProduto {
@@ -145,21 +231,40 @@ function lerProdutosStorage(): Produto[] {
     }
 
     return produtosAntigos.map((produto) => {
-      const categoriaCorrigida = corrigirCategoria(produto.categoria);
+      const categoriaCorrigida = corrigirCategoria(
+        textoSeguro(produto.categoria) || textoSeguro(produto.categoriaPrincipal)
+      );
+
       const grupoCorrigido = corrigirGrupo(
         categoriaCorrigida,
-        produto.grupo
+        textoSeguro(produto.grupo) || textoSeguro(produto.tipo)
       );
+
+      const itemEhPizza = produtoEhPizza(categoriaCorrigida, grupoCorrigido);
+
+      const subgrupoOriginal =
+        textoSeguro(produto.subgrupo) || textoSeguro(produto.subcategoria);
+
+      const opcaoOriginal =
+        textoSeguro(produto.opcao) || textoSeguro(produto.tamanho);
+
+      const subgrupoCorrigido = itemEhPizza
+        ? corrigirSubgrupoPizza(subgrupoOriginal || produto.nome)
+        : subgrupoOriginal;
+
+      const opcaoCorrigida = itemEhPizza
+        ? corrigirOpcaoPizza(subgrupoCorrigido, opcaoOriginal)
+        : opcaoOriginal;
 
       return {
         id: produto.id || criarId(),
         nome: produto.nome || "Produto sem nome",
         categoria: categoriaCorrigida,
         grupo: grupoCorrigido,
-        subgrupo: textoSeguro(produto.subgrupo),
-        opcao: textoSeguro(produto.opcao),
+        subgrupo: subgrupoCorrigido,
+        opcao: opcaoCorrigida,
         tipoPreco: corrigirTipoPreco(produto.tipoPreco),
-        valor: Number(produto.valor || 0),
+        valor: Number(produto.valor || produto.preco || produto.precoVenda || 0),
         controlarEstoque: Boolean(produto.controlarEstoque),
         estoque: Number(produto.estoque || 0),
         ativo: produto.ativo !== false,
@@ -263,6 +368,30 @@ export default function ProdutosPage() {
     });
   }, [produtos, filtroCategoria, filtroGrupo, filtroSubgrupo, busca]);
 
+  const tamanhosPizzaFormulario = useMemo(() => {
+    if (!produtoEhPizza(categoria, grupo)) {
+      return tamanhosPizza;
+    }
+
+    return tamanhosDisponiveisDaPizza(subgrupo || tiposPizza[0]);
+  }, [categoria, grupo, subgrupo]);
+
+  useEffect(() => {
+    if (!produtoEhPizza(categoria, grupo)) {
+      return;
+    }
+
+    const subgrupoCorrigido = corrigirSubgrupoPizza(subgrupo || tiposPizza[0]);
+    const tamanhosPermitidos = tamanhosDisponiveisDaPizza(subgrupoCorrigido);
+    const opcaoAtualExiste = tamanhosPermitidos.some(
+      (item) => normalizarTexto(item) === normalizarTexto(opcao)
+    );
+
+    if (!opcaoAtualExiste) {
+      setOpcao(tamanhosPermitidos[0]);
+    }
+  }, [categoria, grupo, subgrupo, opcao]);
+
   const resumo = useMemo(() => {
     const totalProdutos = produtos.length;
     const totalAtivos = produtos.filter((produto) => produto.ativo).length;
@@ -340,7 +469,7 @@ export default function ProdutosPage() {
 
     if (produtoEhPizza(novaCategoria, primeiroGrupo)) {
       setSubgrupo(tiposPizza[0]);
-      setOpcao(tamanhosPizza[0]);
+      setOpcao(tamanhosDisponiveisDaPizza(tiposPizza[0])[0]);
     } else {
       setSubgrupo("");
       setOpcao("");
@@ -367,7 +496,7 @@ export default function ProdutosPage() {
 
     if (produtoEhPizza(categoria, novoGrupo)) {
       setSubgrupo((valorAtual) => valorAtual || tiposPizza[0]);
-      setOpcao((valorAtual) => valorAtual || tamanhosPizza[0]);
+      setOpcao((valorAtual) => valorAtual || tamanhosDisponiveisDaPizza(tiposPizza[0])[0]);
     } else {
       setSubgrupo("");
       setOpcao("");
@@ -398,8 +527,13 @@ export default function ProdutosPage() {
     }
 
     const itemEhPizza = produtoEhPizza(categoria, grupo);
-    const subgrupoFinal = itemEhPizza ? subgrupo || tiposPizza[0] : subgrupo.trim();
-    const opcaoFinal = itemEhPizza ? opcao || tamanhosPizza[0] : opcao.trim();
+    const subgrupoFinal = itemEhPizza
+      ? corrigirSubgrupoPizza(subgrupo || tiposPizza[0])
+      : subgrupo.trim();
+
+    const opcaoFinal = itemEhPizza
+      ? corrigirOpcaoPizza(subgrupoFinal, opcao)
+      : opcao.trim();
 
     if (editandoId) {
       setProdutos((listaAtual) =>
@@ -448,8 +582,14 @@ export default function ProdutosPage() {
     setNome(produto.nome);
     setCategoria(produto.categoria);
     setGrupo(produto.grupo);
-    setSubgrupo(produtoEhPizza(produto.categoria, produto.grupo) ? produto.subgrupo || tiposPizza[0] : produto.subgrupo || "");
-    setOpcao(produtoEhPizza(produto.categoria, produto.grupo) ? produto.opcao || tamanhosPizza[0] : produto.opcao || "");
+    if (produtoEhPizza(produto.categoria, produto.grupo)) {
+      const subgrupoCorrigido = corrigirSubgrupoPizza(produto.subgrupo || tiposPizza[0]);
+      setSubgrupo(subgrupoCorrigido);
+      setOpcao(corrigirOpcaoPizza(subgrupoCorrigido, produto.opcao));
+    } else {
+      setSubgrupo(produto.subgrupo || "");
+      setOpcao(produto.opcao || "");
+    }
     setTipoPreco(produto.tipoPreco);
     setValor(String(produto.valor));
     setControlarEstoque(produto.controlarEstoque);
@@ -896,7 +1036,11 @@ export default function ProdutosPage() {
                         </label>
                         <select
                           value={subgrupo || tiposPizza[0]}
-                          onChange={(event) => setSubgrupo(event.target.value)}
+                          onChange={(event) => {
+                            const novoSubgrupo = event.target.value;
+                            setSubgrupo(novoSubgrupo);
+                            setOpcao(tamanhosDisponiveisDaPizza(novoSubgrupo)[0]);
+                          }}
                           className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
                         >
                           {tiposPizza.map((item) => (
@@ -906,7 +1050,7 @@ export default function ProdutosPage() {
                           ))}
                         </select>
                         <p className="mt-2 text-xs text-slate-500">
-                          Para pizza, trabalhamos somente com Pizza de Sal ou Pizza Doce.
+                          Para pizza, escolha Pizza de Sal, Pizza Doce, Pizza Pequena ou Pizza Gigante.
                         </p>
                       </div>
 
@@ -915,18 +1059,18 @@ export default function ProdutosPage() {
                           Tamanho da pizza
                         </label>
                         <select
-                          value={opcao || tamanhosPizza[0]}
+                          value={opcao || tamanhosPizzaFormulario[0]}
                           onChange={(event) => setOpcao(event.target.value)}
                           className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-orange-500"
                         >
-                          {tamanhosPizza.map((item) => (
+                          {tamanhosPizzaFormulario.map((item) => (
                             <option key={item} value={item}>
                               {item}
                             </option>
                           ))}
                         </select>
                         <p className="mt-2 text-xs text-slate-500">
-                          Para pizza, os tamanhos disponíveis são apenas Grande e Pequeno.
+                          Pizza de Sal e Pizza Doce usam Grande ou Média. Pizza Pequena e Pizza Gigante usam opção Única.
                         </p>
                       </div>
                     </>
