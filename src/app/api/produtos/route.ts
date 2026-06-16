@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RESTAURANTE_ID = process.env.RESTAURANTE_ID || "samambaia";
@@ -45,78 +46,113 @@ function normalizarProduto(produto: ProdutoLocal) {
 }
 
 export async function GET() {
-  const { data, error } = await supabaseAdmin
-    .from("produtos")
-    .select("dados")
-    .eq("restaurante_id", RESTAURANTE_ID)
-    .order("nome", { ascending: true });
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
 
-  if (error) {
+    const { data, error } = await supabaseAdmin
+      .from("produtos")
+      .select("dados")
+      .eq("restaurante_id", RESTAURANTE_ID)
+      .order("nome", { ascending: true });
+
+    if (error) {
+      return NextResponse.json(
+        { erro: "Erro ao buscar produtos.", detalhe: error.message },
+        { status: 500 }
+      );
+    }
+
+    const produtos = (data || []).map((item) => item.dados);
+
+    return NextResponse.json(produtos);
+  } catch (error: any) {
     return NextResponse.json(
-      { erro: "Erro ao buscar produtos.", detalhe: error.message },
+      {
+        erro: "Erro interno ao buscar produtos.",
+        detalhe: error?.message || "Erro desconhecido.",
+      },
       { status: 500 }
     );
   }
-
-  const produtos = (data || []).map((item) => item.dados);
-
-  return NextResponse.json(produtos);
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
 
-  const produtos = Array.isArray(body) ? body : [body];
+    const body = await request.json();
+    const produtos = Array.isArray(body) ? body : [body];
 
-  if (!produtos.length) {
+    if (!produtos.length) {
+      return NextResponse.json(
+        { erro: "Nenhum produto recebido." },
+        { status: 400 }
+      );
+    }
+
+    const linhas = produtos.map(normalizarProduto);
+
+    const { error } = await supabaseAdmin
+      .from("produtos")
+      .upsert(linhas, { onConflict: "id" });
+
+    if (error) {
+      return NextResponse.json(
+        { erro: "Erro ao salvar produtos.", detalhe: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      total: linhas.length,
+    });
+  } catch (error: any) {
     return NextResponse.json(
-      { erro: "Nenhum produto recebido." },
-      { status: 400 }
-    );
-  }
-
-  const linhas = produtos.map(normalizarProduto);
-
-  const { error } = await supabaseAdmin
-    .from("produtos")
-    .upsert(linhas, { onConflict: "id" });
-
-  if (error) {
-    return NextResponse.json(
-      { erro: "Erro ao salvar produtos.", detalhe: error.message },
+      {
+        erro: "Erro interno ao salvar produtos.",
+        detalhe: error?.message || "Erro desconhecido.",
+      },
       { status: 500 }
     );
   }
-
-  return NextResponse.json({
-    ok: true,
-    total: linhas.length,
-  });
 }
 
 export async function DELETE(request: Request) {
-  const body = await request.json();
-  const id = body?.id;
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
 
-  if (!id) {
+    const body = await request.json();
+    const id = body?.id;
+
+    if (!id) {
+      return NextResponse.json(
+        { erro: "ID do produto não informado." },
+        { status: 400 }
+      );
+    }
+
+    const { error } = await supabaseAdmin
+      .from("produtos")
+      .delete()
+      .eq("id", String(id))
+      .eq("restaurante_id", RESTAURANTE_ID);
+
+    if (error) {
+      return NextResponse.json(
+        { erro: "Erro ao excluir produto.", detalhe: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
     return NextResponse.json(
-      { erro: "ID do produto não informado." },
-      { status: 400 }
-    );
-  }
-
-  const { error } = await supabaseAdmin
-    .from("produtos")
-    .delete()
-    .eq("id", String(id))
-    .eq("restaurante_id", RESTAURANTE_ID);
-
-  if (error) {
-    return NextResponse.json(
-      { erro: "Erro ao excluir produto.", detalhe: error.message },
+      {
+        erro: "Erro interno ao excluir produto.",
+        detalhe: error?.message || "Erro desconhecido.",
+      },
       { status: 500 }
     );
   }
-
-  return NextResponse.json({ ok: true });
 }

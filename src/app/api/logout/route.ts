@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessaoCookieName } from "@/lib/sessionCookie";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 function limparCookie(response: NextResponse) {
   response.cookies.set({
     name: getSessaoCookieName(),

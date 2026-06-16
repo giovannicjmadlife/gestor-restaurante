@@ -12,14 +12,10 @@ export type SessaoSistema = {
 const COOKIE_NAME = "gestor_sessao";
 
 function getSecret() {
-  const secret =
-    process.env.SESSION_SECRET ||
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    "";
+  const secret = process.env.SESSION_SECRET || "";
 
   if (!secret) {
-    throw new Error("SESSION_SECRET ou SUPABASE_SECRET_KEY não configurada.");
+    throw new Error("SESSION_SECRET não configurada.");
   }
 
   return secret;
@@ -33,6 +29,7 @@ function base64UrlEncode(text: string) {
 
 function base64UrlDecode(text: string) {
   const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+
   const padded = normalized.padEnd(
     normalized.length + ((4 - (normalized.length % 4)) % 4),
     "="
@@ -48,7 +45,10 @@ function bytesToBase64Url(bytes: Uint8Array) {
     binary += String.fromCharCode(byte);
   });
 
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 async function assinar(payloadBase64: string) {
@@ -69,6 +69,18 @@ async function assinar(payloadBase64: string) {
   );
 
   return bytesToBase64Url(new Uint8Array(assinatura));
+}
+
+function compararSeguro(a: string, b: string) {
+  if (a.length !== b.length) return false;
+
+  let resultado = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    resultado |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+
+  return resultado === 0;
 }
 
 export function getSessaoCookieName() {
@@ -93,23 +105,23 @@ export async function criarTokenSessao(
 export async function lerSessaoDoToken(
   token?: string | null
 ): Promise<SessaoSistema | null> {
-  if (!token || !token.includes(".")) {
-    return null;
-  }
-
-  const [payloadBase64, assinaturaRecebida] = token.split(".");
-
-  if (!payloadBase64 || !assinaturaRecebida) {
-    return null;
-  }
-
-  const assinaturaCorreta = await assinar(payloadBase64);
-
-  if (assinaturaCorreta !== assinaturaRecebida) {
-    return null;
-  }
-
   try {
+    if (!token || !token.includes(".")) {
+      return null;
+    }
+
+    const [payloadBase64, assinaturaRecebida] = token.split(".");
+
+    if (!payloadBase64 || !assinaturaRecebida) {
+      return null;
+    }
+
+    const assinaturaCorreta = await assinar(payloadBase64);
+
+    if (!compararSeguro(assinaturaCorreta, assinaturaRecebida)) {
+      return null;
+    }
+
     const sessao = JSON.parse(base64UrlDecode(payloadBase64)) as SessaoSistema;
 
     if (!sessao?.id || !sessao?.email || !sessao?.perfil || !sessao?.exp) {
