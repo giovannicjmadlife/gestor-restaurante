@@ -2,12 +2,6 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  buscarProdutos,
-  excluirProdutoBanco,
-  salvarProdutos,
-  salvarProdutosLocais,
-} from "@/lib/produtosStorage";
 
 type CategoriaProduto = "Almoço" | "Janta" | "Bebida" | "Sorvete" | "Outros";
 
@@ -218,49 +212,6 @@ function textoSeguro(valor?: unknown) {
   return String(valor).trim();
 }
 
-function normalizarProdutosStorage(produtosAntigos: ProdutoStorage[]): Produto[] {
-  return produtosAntigos.map((produto) => {
-    const categoriaCorrigida = corrigirCategoria(
-      textoSeguro(produto.categoria) || textoSeguro(produto.categoriaPrincipal)
-    );
-
-    const grupoCorrigido = corrigirGrupo(
-      categoriaCorrigida,
-      textoSeguro(produto.grupo) || textoSeguro(produto.tipo)
-    );
-
-    const itemEhPizza = produtoEhPizza(categoriaCorrigida, grupoCorrigido);
-
-    const subgrupoOriginal =
-      textoSeguro(produto.subgrupo) || textoSeguro(produto.subcategoria);
-
-    const opcaoOriginal =
-      textoSeguro(produto.opcao) || textoSeguro(produto.tamanho);
-
-    const subgrupoCorrigido = itemEhPizza
-      ? corrigirSubgrupoPizza(subgrupoOriginal || produto.nome)
-      : subgrupoOriginal;
-
-    const opcaoCorrigida = itemEhPizza
-      ? corrigirOpcaoPizza(subgrupoCorrigido, opcaoOriginal)
-      : opcaoOriginal;
-
-    return {
-      id: produto.id || criarId(),
-      nome: produto.nome || "Produto sem nome",
-      categoria: categoriaCorrigida,
-      grupo: grupoCorrigido,
-      subgrupo: subgrupoCorrigido,
-      opcao: opcaoCorrigida,
-      tipoPreco: corrigirTipoPreco(produto.tipoPreco),
-      valor: Number(produto.valor || produto.preco || produto.precoVenda || 0),
-      controlarEstoque: Boolean(produto.controlarEstoque),
-      estoque: Number(produto.estoque || 0),
-      ativo: produto.ativo !== false,
-    };
-  });
-}
-
 function lerProdutosStorage(): Produto[] {
   if (typeof window === "undefined") {
     return [];
@@ -279,7 +230,46 @@ function lerProdutosStorage(): Produto[] {
       return [];
     }
 
-    return normalizarProdutosStorage(produtosAntigos);
+    return produtosAntigos.map((produto) => {
+      const categoriaCorrigida = corrigirCategoria(
+        textoSeguro(produto.categoria) || textoSeguro(produto.categoriaPrincipal)
+      );
+
+      const grupoCorrigido = corrigirGrupo(
+        categoriaCorrigida,
+        textoSeguro(produto.grupo) || textoSeguro(produto.tipo)
+      );
+
+      const itemEhPizza = produtoEhPizza(categoriaCorrigida, grupoCorrigido);
+
+      const subgrupoOriginal =
+        textoSeguro(produto.subgrupo) || textoSeguro(produto.subcategoria);
+
+      const opcaoOriginal =
+        textoSeguro(produto.opcao) || textoSeguro(produto.tamanho);
+
+      const subgrupoCorrigido = itemEhPizza
+        ? corrigirSubgrupoPizza(subgrupoOriginal || produto.nome)
+        : subgrupoOriginal;
+
+      const opcaoCorrigida = itemEhPizza
+        ? corrigirOpcaoPizza(subgrupoCorrigido, opcaoOriginal)
+        : opcaoOriginal;
+
+      return {
+        id: produto.id || criarId(),
+        nome: produto.nome || "Produto sem nome",
+        categoria: categoriaCorrigida,
+        grupo: grupoCorrigido,
+        subgrupo: subgrupoCorrigido,
+        opcao: opcaoCorrigida,
+        tipoPreco: corrigirTipoPreco(produto.tipoPreco),
+        valor: Number(produto.valor || produto.preco || produto.precoVenda || 0),
+        controlarEstoque: Boolean(produto.controlarEstoque),
+        estoque: Number(produto.estoque || 0),
+        ativo: produto.ativo !== false,
+      };
+    });
   } catch {
     return [];
   }
@@ -287,7 +277,7 @@ function lerProdutosStorage(): Produto[] {
 
 export default function ProdutosPage() {
   const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [, setCarregouStorage] = useState(false);
+  const [carregouStorage, setCarregouStorage] = useState(false);
 
   const [nome, setNome] = useState("");
   const [categoria, setCategoria] = useState<CategoriaProduto>("Almoço");
@@ -310,30 +300,18 @@ export default function ProdutosPage() {
   const [busca, setBusca] = useState("");
 
   useEffect(() => {
-    async function carregarProdutos() {
-      try {
-        const produtosBanco = await buscarProdutos();
-        const produtosNormalizados = normalizarProdutosStorage(
-          produtosBanco as ProdutoStorage[]
-        );
-
-        setProdutos(produtosNormalizados);
-      } catch {
-        const produtosSalvos = lerProdutosStorage();
-        setProdutos(produtosSalvos);
-      } finally {
-        setCarregouStorage(true);
-      }
-    }
-
-    carregarProdutos();
+    const produtosSalvos = lerProdutosStorage();
+    setProdutos(produtosSalvos);
+    setCarregouStorage(true);
   }, []);
 
-  async function atualizarProdutos(listaAtualizada: Produto[]) {
-    setProdutos(listaAtualizada);
-    salvarProdutosLocais(listaAtualizada);
-    await salvarProdutos(listaAtualizada);
-  }
+  useEffect(() => {
+    if (!carregouStorage) {
+      return;
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(produtos));
+  }, [produtos, carregouStorage]);
 
   const gruposDisponiveis = useMemo(() => {
     return gruposPorCategoria[categoria];
@@ -532,7 +510,7 @@ export default function ProdutosPage() {
     setTipoPreco("Preço fixo");
   }
 
-  async function salvarProduto(event: FormEvent<HTMLFormElement>) {
+  function salvarProduto(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorNumerico = Number(valor.replace(",", "."));
@@ -557,9 +535,9 @@ export default function ProdutosPage() {
       ? corrigirOpcaoPizza(subgrupoFinal, opcao)
       : opcao.trim();
 
-    try {
-      if (editandoId) {
-        const listaAtualizada = produtos.map((produto) =>
+    if (editandoId) {
+      setProdutos((listaAtual) =>
+        listaAtual.map((produto) =>
           produto.id === editandoId
             ? {
                 ...produto,
@@ -574,33 +552,29 @@ export default function ProdutosPage() {
                 estoque: controlarEstoque ? estoqueNumerico : 0,
               }
             : produto
-        );
+        )
+      );
 
-        await atualizarProdutos(listaAtualizada);
-        limparFormulario();
-        return;
-      }
-
-      const novoProduto: Produto = {
-        id: criarId(),
-        nome: nome.trim(),
-        categoria,
-        grupo,
-        subgrupo: subgrupoFinal,
-        opcao: opcaoFinal,
-        tipoPreco,
-        valor: valorNumerico,
-        controlarEstoque,
-        estoque: controlarEstoque ? estoqueNumerico : 0,
-        ativo: true,
-      };
-
-      await atualizarProdutos([novoProduto, ...produtos]);
       limparFormulario();
-    } catch (error) {
-      console.error(error);
-      alert("Não foi possível salvar o produto no Supabase. Tente novamente.");
+      return;
     }
+
+    const novoProduto: Produto = {
+      id: criarId(),
+      nome: nome.trim(),
+      categoria,
+      grupo,
+      subgrupo: subgrupoFinal,
+      opcao: opcaoFinal,
+      tipoPreco,
+      valor: valorNumerico,
+      controlarEstoque,
+      estoque: controlarEstoque ? estoqueNumerico : 0,
+      ativo: true,
+    };
+
+    setProdutos((listaAtual) => [novoProduto, ...listaAtual]);
+    limparFormulario();
   }
 
   function editarProduto(produto: Produto) {
@@ -623,43 +597,31 @@ export default function ProdutosPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function excluirProduto(id: string) {
+  function excluirProduto(id: string) {
     const confirmar = confirm("Deseja realmente excluir este produto?");
 
     if (!confirmar) {
       return;
     }
 
-    try {
-      await excluirProdutoBanco(id);
-
-      const listaAtualizada = produtos.filter((produto) => produto.id !== id);
-      setProdutos(listaAtualizada);
-      salvarProdutosLocais(listaAtualizada);
-
-      if (editandoId === id) {
-        limparFormulario();
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Não foi possível excluir o produto no Supabase. Tente novamente.");
-    }
-  }
-
-  async function alternarStatusProduto(id: string) {
-    const listaAtualizada = produtos.map((produto) =>
-      produto.id === id ? { ...produto, ativo: !produto.ativo } : produto
+    setProdutos((listaAtual) =>
+      listaAtual.filter((produto) => produto.id !== id)
     );
 
-    try {
-      await atualizarProdutos(listaAtualizada);
-    } catch (error) {
-      console.error(error);
-      alert("Não foi possível alterar o status do produto no Supabase.");
+    if (editandoId === id) {
+      limparFormulario();
     }
   }
 
-  async function preencherExemplos() {
+  function alternarStatusProduto(id: string) {
+    setProdutos((listaAtual) =>
+      listaAtual.map((produto) =>
+        produto.id === id ? { ...produto, ativo: !produto.ativo } : produto
+      )
+    );
+  }
+
+  function preencherExemplos() {
     const confirmar = confirm(
       "Deseja adicionar exemplos reais separados por Almoço, Janta e Bebida? Isso não apaga os produtos atuais."
     );
@@ -827,12 +789,7 @@ export default function ProdutosPage() {
       },
     ];
 
-    try {
-      await atualizarProdutos([...exemplos, ...produtos]);
-    } catch (error) {
-      console.error(error);
-      alert("Não foi possível adicionar os exemplos no Supabase.");
-    }
+    setProdutos((listaAtual) => [...exemplos, ...listaAtual]);
   }
 
   return (

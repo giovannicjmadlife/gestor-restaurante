@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { buscarProdutos, salvarProdutos } from "@/lib/produtosStorage";
 
 type ProdutoRaw = Record<string, unknown>;
 
@@ -459,17 +460,38 @@ export default function PdvPage() {
 
   const [atendimentoAtual, setAtendimentoAtual] =
     useState<AtendimentoAtual | null>(null);
+  const [usuarioSistema, setUsuarioSistema] = useState<{
+    nome?: string;
+    email?: string;
+    perfil?: string;
+  } | null>(null);
 
   useEffect(() => {
-    const produtosStorage = safeJsonArray<ProdutoRaw>(
-      localStorage.getItem(LS_PRODUTOS)
-    );
+    const usuarioSalvo = safeJsonObject<{
+      nome?: string;
+      email?: string;
+      perfil?: string;
+    }>(localStorage.getItem("gestor-restaurante-usuario"));
 
-    const produtosMapeados = produtosStorage
-      .map((produto, index) => getProdutoView(produto, index))
-      .filter((produto) => produto.ativo);
+    if (usuarioSalvo) {
+      setUsuarioSistema(usuarioSalvo);
+    }
 
-    setProdutos(produtosMapeados);
+    let cancelado = false;
+
+    async function carregarProdutosDoBanco() {
+      const produtosStorage = await buscarProdutos();
+
+      if (cancelado) return;
+
+      const produtosMapeados = produtosStorage
+        .map((produto, index) => getProdutoView(produto as ProdutoRaw, index))
+        .filter((produto) => produto.ativo);
+
+      setProdutos(produtosMapeados);
+    }
+
+    carregarProdutosDoBanco();
 
     const taxasStorage = safeJsonArray<ProdutoRaw>(
       localStorage.getItem(LS_TAXAS_MAQUININHAS)
@@ -537,6 +559,10 @@ export default function PdvPage() {
         }
       }
     }
+
+    return () => {
+      cancelado = true;
+    };
   }, []);
 
   const caixaAberto = caixaAtual?.status === "Aberto";
@@ -1123,7 +1149,7 @@ export default function PdvPage() {
     setMostrarPagamento(true);
   }
 
-  function baixarEstoqueDosProdutos() {
+  async function baixarEstoqueDosProdutos() {
     const produtosOriginais = safeJsonArray<ProdutoRaw>(
       localStorage.getItem(LS_PRODUTOS)
     );
@@ -1162,7 +1188,12 @@ export default function PdvPage() {
       };
     });
 
-    localStorage.setItem(LS_PRODUTOS, JSON.stringify(atualizados));
+    try {
+      await salvarProdutos(atualizados);
+    } catch (error) {
+      console.error("Erro ao atualizar estoque dos produtos no Supabase:", error);
+      localStorage.setItem(LS_PRODUTOS, JSON.stringify(atualizados));
+    }
 
     const produtosMapeados = atualizados
       .map((produto, index) => getProdutoView(produto, index))
@@ -1355,7 +1386,7 @@ export default function PdvPage() {
     }
   }
 
-  function finalizarVenda() {
+  async function finalizarVenda() {
     if (!caixaAtual || caixaAtual.status !== "Aberto") {
       alert("Abra o caixa antes de finalizar a venda.");
       setMostrarPagamento(false);
@@ -1521,7 +1552,7 @@ export default function PdvPage() {
       );
     }
 
-    baixarEstoqueDosProdutos();
+    await baixarEstoqueDosProdutos();
     removerConsumoDepoisDoPagamento();
 
     setCarrinho([]);
@@ -1881,6 +1912,16 @@ export default function PdvPage() {
     imprimirHtml(gerarHtmlPedidoCozinhaAtual());
   }
 
+  async function sairDoSistema() {
+    const confirmar = confirm("Deseja sair do sistema neste computador?");
+
+    if (!confirmar) return;
+
+    await fetch("/api/logout", { method: "POST" }).catch(() => null);
+    localStorage.removeItem("gestor-restaurante-usuario");
+    window.location.href = "/login";
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f3ee] text-[#1a1a1a]">
       <div className="flex min-h-screen">
@@ -1895,7 +1936,12 @@ export default function PdvPage() {
               <p className="text-[10px] uppercase tracking-wide text-white/70">
                 Usuário
               </p>
-              <p className="text-base font-bold text-white">Adm</p>
+              <p className="text-base font-bold text-white">
+                {usuarioSistema?.nome || "Usuário"}
+              </p>
+              <p className="text-[10px] font-bold uppercase text-[#f97316]">
+                {usuarioSistema?.perfil || ""}
+              </p>
             </div>
           </div>
 
@@ -1951,12 +1997,21 @@ export default function PdvPage() {
             </button>
 
             <a
-              href="/"
+              href="/login?adm=1&redirect=/"
               className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
             >
-              <span className="text-lg">🔄</span>
+              <span className="text-lg">🔐</span>
               Painel
             </a>
+
+            <button
+              type="button"
+              onClick={sairDoSistema}
+              className="mt-4 flex w-full items-center gap-2 rounded-md border border-red-500/40 px-3 py-3 text-left text-sm font-bold text-red-300 hover:bg-red-500/10"
+            >
+              <span className="text-lg">🚪</span>
+              Sair
+            </button>
           </nav>
         </aside>
 
