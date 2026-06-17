@@ -23,6 +23,9 @@ function rotaPermitidaParaCaixa(pathname: string) {
     pathname === "/pdv" ||
     pathname.startsWith("/pdv/") ||
     pathname === "/api/produtos" ||
+    pathname === "/api/financeiro" ||
+    pathname === "/api/colaboradores" ||
+    pathname === "/api/taxas" ||
     pathname === "/api/sessao" ||
     pathname === "/api/logout"
   );
@@ -31,6 +34,7 @@ function rotaPermitidaParaCaixa(pathname: string) {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // arquivos públicos
   if (ehArquivoPublico(pathname) || rotasPublicas.includes(pathname)) {
     return NextResponse.next();
   }
@@ -38,24 +42,29 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get(getSessaoCookieName())?.value;
   const sessao = await lerSessaoDoToken(token);
 
+  // sem login → login
   if (!sessao) {
     const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // se já logado e tentar login de novo
+  if (pathname === "/login") {
+    return NextResponse.redirect(
+      new URL(sessao.perfil === "CAIXA" ? "/pdv" : "/", request.url)
+    );
+  }
+
+  // bloqueio CAIXA
+  if (sessao.perfil === "CAIXA" && !rotaPermitidaParaCaixa(pathname)) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("adm", "1");
     loginUrl.searchParams.set("redirect", pathname);
 
     return NextResponse.redirect(loginUrl);
   }
 
-  if (pathname === "/login") {
-    return NextResponse.redirect(new URL(sessao.perfil === "CAIXA" ? "/pdv" : "/", request.url));
-  }
-
-  if (sessao.perfil === "CAIXA" && !rotaPermitidaParaCaixa(pathname)) {
-    return NextResponse.redirect(new URL("/pdv", request.url));
-  }
-
+  // ✅ ESSA LINHA ESTAVA FALTANDO
   return NextResponse.next();
 }
-
-export const config = {
-  matcher: ["/((?!_next/static|_next/image).*)"],
-};

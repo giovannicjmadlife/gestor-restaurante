@@ -4,11 +4,12 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Colaborador,
   LS_COLABORADORES,
+  buscarColaboradoresSupabase,
+  deduplicarPorId,
   formatarMoeda,
   lerArrayLocalStorage,
   numeroSeguro,
   salvarArrayLocalStorage,
-  buscarColaboradoresSupabase,
   salvarColaboradoresSupabase,
 } from "@/lib/financeiroSupabase";
 
@@ -20,6 +21,12 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const linkBase =
+  "block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white";
+const linkAtivo = "block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white";
+const linkPdv =
+  "block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700";
+
 export default function ColaboradoresPage() {
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -27,36 +34,70 @@ export default function ColaboradoresPage() {
   const [percentualComissao, setPercentualComissao] = useState("");
   const [telefone, setTelefone] = useState("");
   const [observacoes, setObservacoes] = useState("");
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erroSincronizacao, setErroSincronizacao] = useState("");
 
   useEffect(() => {
-    const locais = lerArrayLocalStorage<Colaborador>(LS_COLABORADORES);
-    setColaboradores(locais);
+    let ativo = true;
 
-    buscarColaboradoresSupabase()
-      .then((dados) => {
-        if (dados.length > 0) {
-          setColaboradores(dados);
-          salvarArrayLocalStorage(LS_COLABORADORES, dados);
-        } else if (locais.length > 0) {
-          salvarColaboradoresSupabase(locais).catch((error) => {
-            console.error("Não foi possível enviar colaboradores locais para o Supabase.", error);
-          });
-        }
-      })
-      .catch((error) => {
-        console.error("Não foi possível carregar colaboradores do Supabase.", error);
-      });
+    async function carregarColaboradores() {
+      setCarregando(true);
+      setErroSincronizacao("");
+
+      const colaboradoresLocais = lerArrayLocalStorage<Colaborador>(LS_COLABORADORES);
+
+      if (ativo) {
+        setColaboradores(colaboradoresLocais);
+      }
+
+      try {
+        const colaboradoresSupabase = await buscarColaboradoresSupabase();
+        const listaUnificada = deduplicarPorId([
+          ...(colaboradoresSupabase || []),
+          ...colaboradoresLocais,
+        ]) as Colaborador[];
+
+        if (!ativo) return;
+
+        setColaboradores(listaUnificada);
+        salvarArrayLocalStorage(LS_COLABORADORES, listaUnificada);
+      } catch (erro) {
+        if (!ativo) return;
+        setErroSincronizacao(
+          erro instanceof Error
+            ? erro.message
+            : "Não foi possível carregar colaboradores do Supabase. Usando cache local."
+        );
+      } finally {
+        if (ativo) setCarregando(false);
+      }
+    }
+
+    carregarColaboradores();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   async function salvarLista(novaLista: Colaborador[]) {
     setColaboradores(novaLista);
     salvarArrayLocalStorage(LS_COLABORADORES, novaLista);
+    setErroSincronizacao("");
+    setSalvando(true);
 
     try {
       await salvarColaboradoresSupabase(novaLista);
-    } catch (error) {
-      console.error("Não foi possível salvar colaboradores no Supabase.", error);
-      alert("Colaborador salvo neste navegador, mas não foi possível enviar ao Supabase. Confira se o SQL do patch já foi executado.");
+    } catch (erro) {
+      setErroSincronizacao(
+        erro instanceof Error
+          ? erro.message
+          : "Os colaboradores foram salvos no cache local, mas não sincronizaram com o Supabase."
+      );
+      throw erro;
+    } finally {
+      setSalvando(false);
     }
   }
 
@@ -86,40 +127,46 @@ export default function ColaboradoresPage() {
 
     const agora = new Date().toISOString();
 
-    if (editandoId) {
-      const atualizados = colaboradores.map((colaborador) => {
-        if (colaborador.id !== editandoId) return colaborador;
+    try {
+      if (editandoId) {
+        const atualizados = colaboradores.map((colaborador) => {
+          if (colaborador.id !== editandoId) return colaborador;
 
-        return {
-          ...colaborador,
-          nome: nomeTratado,
-          percentualComissao: percentual,
-          telefone: telefone.trim(),
-          observacoes: observacoes.trim(),
-          atualizadoEm: agora,
-        };
-      });
+          return {
+            ...colaborador,
+            nome: nomeTratado,
+            percentualComissao: percentual,
+            telefone: telefone.trim(),
+            observacoes: observacoes.trim(),
+            atualizadoEm: agora,
+          };
+        });
 
-      await salvarLista(atualizados);
+        await salvarLista(atualizados);
+        limparFormulario();
+        alert("Colaborador atualizado com sucesso.");
+        return;
+      }
+
+      const novo: Colaborador = {
+        id: uid(),
+        nome: nomeTratado,
+        percentualComissao: percentual,
+        telefone: telefone.trim(),
+        observacoes: observacoes.trim(),
+        ativo: true,
+        criadoEm: agora,
+        atualizadoEm: agora,
+      };
+
+      await salvarLista([novo, ...colaboradores]);
       limparFormulario();
-      alert("Colaborador atualizado com sucesso.");
-      return;
+      alert("Colaborador cadastrado com sucesso.");
+    } catch {
+      alert(
+        "Não consegui salvar no Supabase agora. Confira se a API /api/colaboradores e o SQL do Supabase foram aplicados."
+      );
     }
-
-    const novo: Colaborador = {
-      id: uid(),
-      nome: nomeTratado,
-      percentualComissao: percentual,
-      telefone: telefone.trim(),
-      observacoes: observacoes.trim(),
-      ativo: true,
-      criadoEm: agora,
-      atualizadoEm: agora,
-    };
-
-    await salvarLista([novo, ...colaboradores]);
-    limparFormulario();
-    alert("Colaborador cadastrado com sucesso.");
   }
 
   function editarColaborador(colaborador: Colaborador) {
@@ -141,7 +188,11 @@ export default function ColaboradoresPage() {
       };
     });
 
-    await salvarLista(atualizados);
+    try {
+      await salvarLista(atualizados);
+    } catch {
+      alert("Não consegui sincronizar a alteração com o Supabase.");
+    }
   }
 
   async function removerColaborador(id: string) {
@@ -151,21 +202,10 @@ export default function ColaboradoresPage() {
 
     if (!confirmar) return;
 
-    const atualizados = colaboradores.filter((colaborador) => colaborador.id !== id);
-    setColaboradores(atualizados);
-    salvarArrayLocalStorage(LS_COLABORADORES, atualizados);
-
     try {
-      const resposta = await fetch("/api/colaboradores", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-
-      if (!resposta.ok) throw new Error(await resposta.text());
-    } catch (error) {
-      console.error("Não foi possível remover o colaborador do Supabase.", error);
-      alert("Removido neste navegador, mas não foi possível remover do Supabase.");
+      await salvarLista(colaboradores.filter((colaborador) => colaborador.id !== id));
+    } catch {
+      alert("Não consegui remover no Supabase agora.");
     }
   }
 
@@ -196,25 +236,47 @@ export default function ColaboradoresPage() {
           </div>
 
           <nav className="space-y-2 px-4 py-6">
-            <a href="/" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+            <a href="/" className={linkBase}>
               Dashboard
             </a>
-            <a href="/pdv" className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700">
+
+            <a href="/pdv" className={linkPdv}>
               Acessar PDV
             </a>
-            <a href="/entradas" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a href="/entradas" className={linkBase}>
               Entradas
             </a>
-            <a href="/saidas" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a href="/saidas" className={linkBase}>
               Saídas
             </a>
-            <a href="/folha-de-pagamento" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a href="/contas-a-pagar" className={linkBase}>
+              Contas a pagar
+            </a>
+
+            <a href="/contas-a-receber" className={linkBase}>
+              Contas a receber
+            </a>
+
+            <a href="/folha-de-pagamento" className={linkBase}>
               Folha de pagamento
             </a>
-            <a href="/colaboradores" className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white">
+
+            <a href="/colaboradores" className={linkAtivo}>
               Colaboradores
             </a>
-            <a href="/configuracoes" className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">
+
+            <a href="/investimentos" className={linkBase}>
+              Investimentos
+            </a>
+
+            <a href="/relatorios" className={linkBase}>
+              Relatórios
+            </a>
+
+            <a href="/configuracoes" className={linkBase}>
               Configurações
             </a>
           </nav>
@@ -225,13 +287,17 @@ export default function ColaboradoresPage() {
             <p className="text-sm font-medium uppercase tracking-wide text-orange-600">
               Cadastros
             </p>
-            <h1 className="mt-1 text-3xl font-bold text-slate-950">
-              Colaboradores
-            </h1>
+            <h1 className="mt-1 text-3xl font-bold text-slate-950">Colaboradores</h1>
             <p className="mt-2 text-sm text-slate-600">
               Cadastre vendedores/atendentes e o percentual de comissão para o dashboard calcular o valor a pagar no fim do mês.
             </p>
           </div>
+
+          {erroSincronizacao && (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+              {erroSincronizacao}
+            </div>
+          )}
 
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -249,7 +315,9 @@ export default function ColaboradoresPage() {
               <strong className="mt-2 block text-2xl text-slate-950">
                 {resumo.mediaComissao.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%
               </strong>
-              <p className="mt-2 text-xs text-slate-500">Referência geral do cadastro.</p>
+              <p className="mt-2 text-xs text-slate-500">
+                {carregando ? "Carregando Supabase..." : "Referência geral do cadastro."}
+              </p>
             </div>
           </div>
 
@@ -307,9 +375,10 @@ export default function ColaboradoresPage() {
               <div className="mt-5 flex gap-3">
                 <button
                   type="submit"
-                  className="flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600"
+                  disabled={salvando}
+                  className="flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editandoId ? "Salvar edição" : "Cadastrar"}
+                  {salvando ? "Salvando..." : editandoId ? "Salvar edição" : "Cadastrar"}
                 </button>
 
                 {editandoId && (
@@ -329,7 +398,7 @@ export default function ColaboradoresPage() {
 
               {colaboradores.length === 0 ? (
                 <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
-                  Nenhum colaborador cadastrado ainda.
+                  {carregando ? "Carregando colaboradores..." : "Nenhum colaborador cadastrado ainda."}
                 </div>
               ) : (
                 <div className="mt-5 space-y-3">

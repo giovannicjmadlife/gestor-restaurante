@@ -125,6 +125,7 @@ export default function ConfiguracoesPage() {
 
   const [salvoComSucesso, setSalvoComSucesso] = useState(false);
   const [taxaEntregaSalva, setTaxaEntregaSalva] = useState(false);
+  const [taxasCarregadas, setTaxasCarregadas] = useState(false);
 
   const [nomeTaxaMaquininha, setNomeTaxaMaquininha] = useState("");
   const [tipoTaxaMaquininha, setTipoTaxaMaquininha] =
@@ -170,21 +171,81 @@ export default function ConfiguracoesPage() {
     );
 
     setTaxasDelivery(lerListaStorage<TaxaCadastro>(TAXAS_DELIVERY_KEY));
+    setTaxasCarregadas(true);
+
+    fetch("/api/taxas", { cache: "no-store" })
+      .then((resposta) => (resposta.ok ? resposta.json() : null))
+      .then((dados) => {
+        if (!dados) return;
+
+        if (Array.isArray(dados.maquininhas)) {
+          setTaxasMaquininhas(dados.maquininhas);
+        }
+
+        if (Array.isArray(dados.delivery)) {
+          setTaxasDelivery(dados.delivery);
+        }
+
+        if (dados.entrega) {
+          setTaxaEntrega({
+            ...taxaEntregaPadrao,
+            ...dados.entrega,
+            valor: Number(dados.entrega.valor || 0),
+            ativo: dados.entrega.ativo !== false,
+          });
+          setValorTaxaEntrega(String(dados.entrega.valor || 0));
+        }
+      })
+      .catch((error) => {
+        console.error("Não foi possível carregar taxas do Supabase.", error);
+      });
   }, []);
+
+  async function salvarTaxasNoSupabase(
+    maquininhas = taxasMaquininhas,
+    delivery = taxasDelivery,
+    entrega = taxaEntrega
+  ) {
+    try {
+      const resposta = await fetch("/api/taxas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maquininhas, delivery, entrega }),
+      });
+
+      if (!resposta.ok) {
+        throw new Error(await resposta.text());
+      }
+    } catch (error) {
+      console.error("Não foi possível salvar taxas no Supabase.", error);
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem(
       TAXAS_MAQUININHA_KEY,
       JSON.stringify(taxasMaquininhas)
     );
+
+    if (taxasCarregadas) {
+      salvarTaxasNoSupabase(taxasMaquininhas, taxasDelivery, taxaEntrega);
+    }
   }, [taxasMaquininhas]);
 
   useEffect(() => {
     localStorage.setItem(TAXAS_DELIVERY_KEY, JSON.stringify(taxasDelivery));
+
+    if (taxasCarregadas) {
+      salvarTaxasNoSupabase(taxasMaquininhas, taxasDelivery, taxaEntrega);
+    }
   }, [taxasDelivery]);
 
   useEffect(() => {
     localStorage.setItem(TAXA_ENTREGA_KEY, JSON.stringify(taxaEntrega));
+
+    if (taxasCarregadas) {
+      salvarTaxasNoSupabase(taxasMaquininhas, taxasDelivery, taxaEntrega);
+    }
   }, [taxaEntrega]);
 
   const resumoTaxas = useMemo(() => {

@@ -756,6 +756,12 @@ export default function ComandaPage() {
     alert("Comanda liberada com sucesso.");
   }
 
+  async function abrirPainelAdmin() {
+    await fetch("/api/logout", { method: "POST" }).catch(() => null);
+    localStorage.removeItem("gestor-restaurante-usuario");
+    window.location.href = "/login?adm=1&redirect=/";
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f3ee] text-[#111111]">
       <div className="flex min-h-screen">
@@ -826,13 +832,14 @@ export default function ComandaPage() {
               Clientes
             </button>
 
-            <a
-              href="/"
+            <button
+              type="button"
+              onClick={abrirPainelAdmin}
               className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
             >
-              <span className="text-lg">🔄</span>
+              <span className="text-lg">🔐</span>
               Painel
-            </a>
+            </button>
           </nav>
         </aside>
 

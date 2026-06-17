@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { buscarProdutos, salvarProdutos } from "@/lib/produtosStorage";
+import { salvarVendaFinanceiroSupabase } from "@/lib/financeiroSupabase";
 
 type ProdutoRaw = Record<string, unknown>;
 
@@ -42,7 +43,27 @@ type CartItem = {
   saboresPizza?: string[];
 };
 
-type FormaPagamento = "Dinheiro" | "PIX" | "Débito" | "Crédito" | "Correntista";
+type FormaPagamentoBase = "Dinheiro" | "PIX" | "Débito" | "Crédito" | "Correntista";
+type FormaPagamento = FormaPagamentoBase | "Dividido";
+
+type PagamentoVenda = {
+  id: string;
+  forma: FormaPagamentoBase;
+  valorPago: number;
+  taxaPercentual: number;
+  valorTaxa: number;
+  taxaDescontada: number;
+  valorLiquido: number;
+};
+
+type Colaborador = {
+  id: string;
+  nome: string;
+  percentualComissao: number;
+  ativo: boolean;
+  telefone?: string;
+  observacoes?: string;
+};
 
 type Correntista = {
   id: string;
@@ -116,6 +137,7 @@ const LS_VENDAS_DETALHADAS = "gestor-restaurante-vendas-detalhadas";
 const LS_TAXAS_MAQUININHAS = "gestor-restaurante-taxas-maquininhas";
 const LS_CONTAS_RECEBER = "gestor-restaurante-contas-receber";
 const LS_CORRENTISTAS = "gestor-restaurante-correntistas";
+const LS_COLABORADORES = "gestor-restaurante-colaboradores";
 
 const LS_CAIXA_ATUAL = "gestor-restaurante-caixa-atual";
 const LS_CAIXAS = "gestor-restaurante-caixas";
@@ -127,6 +149,8 @@ const LS_MESAS = "gestor-restaurante-mesas";
 const LS_COMANDAS = "gestor-restaurante-comandas";
 
 const CATEGORIAS_PDV = ["Almoço", "Janta", "Bebidas", "Sorvete", "Outros"];
+const FORMAS_PAGAMENTO_BASE: FormaPagamentoBase[] = ["Dinheiro", "PIX", "Débito", "Crédito", "Correntista"];
+const FORMAS_PAGAMENTO_DIVIDIDO: FormaPagamentoBase[] = ["Dinheiro", "PIX", "Débito", "Crédito"];
 
 const ORDEM_SUBGRUPOS_PIZZA = [
   "Pizza de Sal",
@@ -390,7 +414,7 @@ function calcularTotalItem(item: CartItem) {
 }
 
 function getTaxaMaquininha(
-  formaPagamento: FormaPagamento,
+  formaPagamento: FormaPagamentoBase,
   taxas: ProdutoRaw[]
 ) {
   if (formaPagamento === "Dinheiro" || formaPagamento === "Correntista") {
@@ -428,10 +452,41 @@ function getTaxaMaquininha(
   return 0;
 }
 
+function calcularPagamentoVenda(
+  forma: FormaPagamentoBase,
+  valorPago: number,
+  taxas: ProdutoRaw[]
+): PagamentoVenda {
+  const taxaPercentual = getTaxaMaquininha(forma, taxas);
+  const valorTaxa = Number(((valorPago * taxaPercentual) / 100).toFixed(2));
+  const valorLiquido = Number((valorPago - valorTaxa).toFixed(2));
+
+  return {
+    id: uid(),
+    forma,
+    valorPago: Number(valorPago.toFixed(2)),
+    taxaPercentual,
+    valorTaxa,
+    taxaDescontada: valorTaxa,
+    valorLiquido,
+  };
+}
+
+function descricaoPagamentos(pagamentos: PagamentoVenda[]) {
+  if (pagamentos.length <= 1) {
+    return pagamentos[0]?.forma || "Não informado";
+  }
+
+  return pagamentos
+    .map((pagamento) => `${pagamento.forma} ${money(pagamento.valorPago)}`)
+    .join(" + ");
+}
+
 export default function PdvPage() {
   const [produtos, setProdutos] = useState<ProdutoView[]>([]);
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
   const [correntistas, setCorrentistas] = useState<Correntista[]>([]);
+  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
 
   const [categoriaSelecionada, setCategoriaSelecionada] = useState("");
   const [grupoSelecionado, setGrupoSelecionado] = useState("");
@@ -450,6 +505,14 @@ export default function PdvPage() {
   const [valorRecebido, setValorRecebido] = useState("");
   const [descontoReais, setDescontoReais] = useState("");
   const [correntistaSelecionadoId, setCorrentistaSelecionadoId] = useState("");
+  const [colaboradorSelecionadoId, setColaboradorSelecionadoId] = useState("");
+  const [pagamentosDivididos, setPagamentosDivididos] = useState<Record<FormaPagamentoBase, string>>({
+    Dinheiro: "",
+    PIX: "",
+    Débito: "",
+    Crédito: "",
+    Correntista: "",
+  });
 
   const [pesoModal, setPesoModal] = useState<PesoModal | null>(null);
 
@@ -499,6 +562,17 @@ export default function PdvPage() {
 
     setTaxasMaquininhas(taxasStorage);
 
+    fetch("/api/taxas", { cache: "no-store" })
+      .then((resposta) => (resposta.ok ? resposta.json() : null))
+      .then((dados) => {
+        if (!dados?.maquininhas || cancelado) return;
+        setTaxasMaquininhas(dados.maquininhas);
+        localStorage.setItem(LS_TAXAS_MAQUININHAS, JSON.stringify(dados.maquininhas));
+      })
+      .catch((error) => {
+        console.error("Não foi possível carregar taxas do Supabase.", error);
+      });
+
     const correntistasStorage = safeJsonArray<Correntista>(
       localStorage.getItem(LS_CORRENTISTAS)
     );
@@ -506,6 +580,25 @@ export default function PdvPage() {
     setCorrentistas(
       correntistasStorage.filter((correntista) => correntista.status !== "Inativo")
     );
+
+    const colaboradoresStorage = safeJsonArray<Colaborador>(
+      localStorage.getItem(LS_COLABORADORES)
+    );
+
+    setColaboradores(
+      colaboradoresStorage.filter((colaborador) => colaborador.ativo !== false)
+    );
+
+    fetch("/api/colaboradores", { cache: "no-store" })
+      .then((resposta) => (resposta.ok ? resposta.json() : []))
+      .then((dados) => {
+        if (!Array.isArray(dados) || cancelado) return;
+        setColaboradores(dados.filter((colaborador: Colaborador) => colaborador.ativo !== false));
+        localStorage.setItem(LS_COLABORADORES, JSON.stringify(dados));
+      })
+      .catch((error) => {
+        console.error("Não foi possível carregar colaboradores do Supabase.", error);
+      });
 
     const caixaSalvo = safeJsonObject<CaixaAtual>(
       localStorage.getItem(LS_CAIXA_ATUAL)
@@ -777,6 +870,7 @@ export default function PdvPage() {
   }, [carrinho]);
 
   const taxaPercentual = useMemo(() => {
+    if (formaPagamento === "Dividido") return 0;
     return getTaxaMaquininha(formaPagamento, taxasMaquininhas);
   }, [formaPagamento, taxasMaquininhas]);
 
@@ -790,9 +884,40 @@ export default function PdvPage() {
     return Number(Math.max(totalBruto - descontoNumerico, 0).toFixed(2));
   }, [totalBruto, descontoNumerico]);
 
+  const pagamentosCalculados = useMemo(() => {
+    if (formaPagamento === "Dividido") {
+      return FORMAS_PAGAMENTO_DIVIDIDO
+        .map((forma) => {
+          const valor = asNumber(pagamentosDivididos[forma]);
+          return calcularPagamentoVenda(forma, valor, taxasMaquininhas);
+        })
+        .filter((pagamento) => pagamento.valorPago > 0);
+    }
+
+    if (valorCobrar <= 0) return [];
+
+    return [calcularPagamentoVenda(formaPagamento, valorCobrar, taxasMaquininhas)];
+  }, [formaPagamento, pagamentosDivididos, taxasMaquininhas, valorCobrar]);
+
+  const totalPagamentosDivididos = useMemo(() => {
+    return Number(
+      FORMAS_PAGAMENTO_DIVIDIDO.reduce((total, forma) => {
+        return total + asNumber(pagamentosDivididos[forma]);
+      }, 0).toFixed(2)
+    );
+  }, [pagamentosDivididos]);
+
+  const diferencaPagamentoDividido = useMemo(() => {
+    return Number((valorCobrar - totalPagamentosDivididos).toFixed(2));
+  }, [valorCobrar, totalPagamentosDivididos]);
+
   const valorTaxa = useMemo(() => {
-    return Number(((valorCobrar * taxaPercentual) / 100).toFixed(2));
-  }, [valorCobrar, taxaPercentual]);
+    return Number(
+      pagamentosCalculados
+        .reduce((total, pagamento) => total + pagamento.valorTaxa, 0)
+        .toFixed(2)
+    );
+  }, [pagamentosCalculados]);
 
   const valorLiquido = useMemo(() => {
     return Number((valorCobrar - valorTaxa).toFixed(2));
@@ -812,6 +937,12 @@ export default function PdvPage() {
       (correntista) => correntista.id === correntistaSelecionadoId
     );
   }, [correntistas, correntistaSelecionadoId]);
+
+  const colaboradorSelecionado = useMemo(() => {
+    return colaboradores.find(
+      (colaborador) => colaborador.id === colaboradorSelecionadoId
+    );
+  }, [colaboradores, colaboradorSelecionadoId]);
 
   const tipoAtendimento = atendimentoAtual?.tipo || "Balcão";
 
@@ -1413,12 +1544,53 @@ export default function PdvPage() {
       return;
     }
 
+    if (formaPagamento === "Dividido") {
+      if (pagamentosCalculados.length < 2) {
+        alert("Para rachar a conta, informe pelo menos duas formas de pagamento.");
+        return;
+      }
+
+      if (Math.abs(diferencaPagamentoDividido) > 0.01) {
+        alert(
+          `A soma dos pagamentos precisa fechar exatamente o valor a cobrar.
+
+Valor a cobrar: ${money(
+            valorCobrar
+          )}
+Informado: ${money(totalPagamentosDivididos)}
+Falta/sobra: ${money(
+            diferencaPagamentoDividido
+          )}`
+        );
+        return;
+      }
+    }
+
     const vendaId = uid();
     const agora = new Date();
+    const pagamentosVenda = pagamentosCalculados.map((pagamento) => ({
+      ...pagamento,
+      id: uid(),
+    }));
+    const formaRecebimentoFinal =
+      formaPagamento === "Dividido" ? "Dividido" : formaPagamento;
+    const formaDetalhada = descricaoPagamentos(pagamentosVenda);
 
     const descricaoItens = carrinho
       .map((item) => `${item.quantidade} ${item.unidade} - ${item.nome}`)
       .join(" | ");
+
+    const dadosColaborador = colaboradorSelecionado
+      ? {
+          colaboradorId: colaboradorSelecionado.id,
+          colaboradorNome: colaboradorSelecionado.nome,
+          colaboradorPercentual: asNumber(colaboradorSelecionado.percentualComissao),
+        }
+      : {
+          colaboradorId: "",
+          colaboradorNome: "",
+          colaboradorPercentual: 0,
+        };
 
     const entradasAtuais = safeJsonArray<ProdutoRaw>(
       localStorage.getItem(LS_ENTRADAS)
@@ -1445,8 +1617,11 @@ export default function PdvPage() {
           : tipoAtendimento === "Comanda"
           ? `Venda Comanda ${atendimentoAtual?.comandaNome || ""} - ${descricaoItens}`
           : `Venda PDV - ${descricaoItens}`,
-      formaRecebimento: formaPagamento,
-      forma: formaPagamento,
+      formaRecebimento: formaRecebimentoFinal,
+      formaPagamento: formaRecebimentoFinal,
+      forma: formaRecebimentoFinal,
+      formaPagamentoDetalhada: formaDetalhada,
+      pagamentos: pagamentosVenda,
       valorOriginal: totalBruto,
       subtotalItens: totalBruto,
       descontoValor: descontoNumerico,
@@ -1459,6 +1634,7 @@ export default function PdvPage() {
       origem: "PDV",
       cliente: consumidorVenda,
       operador: caixaAtual.operador,
+      ...dadosColaborador,
       criadoEm: agora.toISOString(),
     };
 
@@ -1486,7 +1662,9 @@ export default function PdvPage() {
       status: "Finalizado",
       tipoDocumento: "Gerencial",
       consumidor: consumidorVenda,
-      formaPagamento,
+      formaPagamento: formaRecebimentoFinal,
+      formaPagamentoDetalhada: formaDetalhada,
+      pagamentos: pagamentosVenda,
       totalItens,
       valorOriginal: totalBruto,
       subtotalItens: totalBruto,
@@ -1498,6 +1676,7 @@ export default function PdvPage() {
       valorLiquido,
       valor: valorLiquido,
       itens: carrinho,
+      ...dadosColaborador,
     };
 
     localStorage.setItem(
@@ -1505,12 +1684,14 @@ export default function PdvPage() {
       JSON.stringify([novaVendaDetalhada, ...vendasAtuais])
     );
 
+    let novaContaReceber: ProdutoRaw | null = null;
+
     if (formaPagamento === "Correntista" && correntistaSelecionado) {
       const contasAtuais = safeJsonArray<ProdutoRaw>(
         localStorage.getItem(LS_CONTAS_RECEBER)
       );
 
-      const novaContaReceber = {
+      novaContaReceber = {
         id: uid(),
         vendaId,
         data: todayInputDate(),
@@ -1540,8 +1721,7 @@ export default function PdvPage() {
 
         return {
           ...correntista,
-          saldoAberto:
-            asNumber(correntista.saldoAberto) + valorCobrar,
+          saldoAberto: asNumber(correntista.saldoAberto) + valorCobrar,
           atualizadoEm: agora.toISOString(),
         };
       });
@@ -1550,6 +1730,17 @@ export default function PdvPage() {
         LS_CORRENTISTAS,
         JSON.stringify(correntistasAtualizados)
       );
+    }
+
+    try {
+      await salvarVendaFinanceiroSupabase({
+        entrada: novaEntrada,
+        vendaDetalhada: novaVendaDetalhada,
+        contaReceber: novaContaReceber,
+      });
+    } catch (error) {
+      console.error("Venda salva localmente, mas não foi enviada ao Supabase.", error);
+      alert("A venda foi finalizada neste caixa, mas não foi enviada ao Supabase. Verifique conexão, variáveis da Vercel e se o SQL do patch já foi executado.");
     }
 
     await baixarEstoqueDosProdutos();
@@ -1561,6 +1752,14 @@ export default function PdvPage() {
     setValorRecebido("");
     setDescontoReais("");
     setCorrentistaSelecionadoId("");
+    setColaboradorSelecionadoId("");
+    setPagamentosDivididos({
+      Dinheiro: "",
+      PIX: "",
+      Débito: "",
+      Crédito: "",
+      Correntista: "",
+    });
     setFormaPagamento("Dinheiro");
     setMostrarPagamento(false);
 
@@ -1922,6 +2121,12 @@ export default function PdvPage() {
     window.location.href = "/login";
   }
 
+  async function abrirPainelAdmin() {
+    await fetch("/api/logout", { method: "POST" }).catch(() => null);
+    localStorage.removeItem("gestor-restaurante-usuario");
+    window.location.href = "/login?adm=1&redirect=/";
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f3ee] text-[#1a1a1a]">
       <div className="flex min-h-screen">
@@ -1996,13 +2201,14 @@ export default function PdvPage() {
               Clientes
             </button>
 
-            <a
-              href="/login?adm=1&redirect=/"
+            <button
+              type="button"
+              onClick={abrirPainelAdmin}
               className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
             >
               <span className="text-lg">🔐</span>
               Painel
-            </a>
+            </button>
 
             <button
               type="button"
@@ -2709,8 +2915,8 @@ export default function PdvPage() {
       )}
 
       {mostrarPagamento && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-16">
-          <div className="w-[500px] rounded-2xl border-2 border-[#f1d2ba] bg-white p-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-3 py-6">
+          <div className="max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-2xl border-2 border-[#f1d2ba] bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-black uppercase text-[#111111]">
                 Finalizar venda
@@ -2739,22 +2945,42 @@ export default function PdvPage() {
               </div>
             )}
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              {(["Dinheiro", "PIX", "Débito", "Crédito", "Correntista"] as FormaPagamento[]).map(
-                (forma) => (
-                  <button
-                    key={forma}
-                    onClick={() => setFormaPagamento(forma)}
-                    className={`rounded-xl py-3 text-base font-black uppercase ${
-                      formaPagamento === forma
-                        ? "bg-[#f97316] text-white"
-                        : "bg-[#111111] text-white/90"
-                    }`}
-                  >
-                    {forma}
-                  </button>
-                )
-              )}
+            <div className="mt-4">
+              <label className="text-sm font-extrabold uppercase text-[#111111]">
+                Colaborador responsável
+              </label>
+              <select
+                value={colaboradorSelecionadoId}
+                onChange={(event) => setColaboradorSelecionadoId(event.target.value)}
+                className="mt-2 h-12 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-sm font-bold outline-none"
+              >
+                <option value="">Sem colaborador específico</option>
+                {colaboradores.map((colaborador) => (
+                  <option key={colaborador.id} value={colaborador.id}>
+                    {colaborador.nome} · {asNumber(colaborador.percentualComissao).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                Essa escolha alimenta o relatório de comissão no dashboard.
+              </p>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {([...FORMAS_PAGAMENTO_BASE, "Dividido"] as FormaPagamento[]).map((forma) => (
+                <button
+                  key={forma}
+                  type="button"
+                  onClick={() => setFormaPagamento(forma)}
+                  className={`rounded-xl py-3 text-base font-black uppercase ${
+                    formaPagamento === forma
+                      ? "bg-[#f97316] text-white"
+                      : "bg-[#111111] text-white/90"
+                  }`}
+                >
+                  {forma === "Dividido" ? "Rachar" : forma}
+                </button>
+              ))}
             </div>
 
             {formaPagamento === "Correntista" && (
@@ -2804,6 +3030,58 @@ export default function PdvPage() {
               </div>
             )}
 
+            {formaPagamento === "Dividido" && (
+              <div className="mt-4 rounded-2xl border-2 border-[#f1d2ba] bg-[#fffaf6] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-black uppercase text-[#111111]">
+                      Rachar conta
+                    </h3>
+                    <p className="text-xs font-semibold text-slate-500">
+                      Informe quanto será pago em cada forma. A soma precisa bater com o valor a cobrar.
+                    </p>
+                  </div>
+                  <strong className={diferencaPagamentoDividido === 0 ? "text-emerald-700" : "text-red-600"}>
+                    {diferencaPagamentoDividido === 0
+                      ? "Fechado"
+                      : `Falta/sobra ${money(diferencaPagamentoDividido)}`}
+                  </strong>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {FORMAS_PAGAMENTO_DIVIDIDO.map((forma) => (
+                    <div key={forma}>
+                      <label className="text-xs font-black uppercase text-[#111111]">
+                        {forma}
+                      </label>
+                      <input
+                        value={pagamentosDivididos[forma]}
+                        onChange={(event) =>
+                          setPagamentosDivididos((atual) => ({
+                            ...atual,
+                            [forma]: event.target.value,
+                          }))
+                        }
+                        placeholder="R$ 0,00"
+                        className="mt-1 h-11 w-full rounded-xl border-2 border-[#f1d2ba] px-3 text-base font-bold outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl bg-white p-3">
+                    <p className="text-xs font-black uppercase text-slate-500">Informado</p>
+                    <p className="font-black text-[#111111]">{money(totalPagamentosDivididos)}</p>
+                  </div>
+                  <div className="rounded-xl bg-white p-3">
+                    <p className="text-xs font-black uppercase text-slate-500">Valor a cobrar</p>
+                    <p className="font-black text-[#f97316]">{money(valorCobrar)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4">
               <label className="text-sm font-extrabold uppercase text-[#111111]">
                 Desconto em R$
@@ -2838,6 +3116,20 @@ export default function PdvPage() {
                 <span className="font-semibold text-[#111111]">Valor a cobrar</span>
                 <strong className="text-lg font-black text-[#f97316]">
                   {money(valorCobrar)}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">Taxas internas</span>
+                <strong className="text-lg font-black text-red-600">
+                  - {money(valorTaxa)}
+                </strong>
+              </div>
+
+              <div className="mt-2 flex justify-between">
+                <span className="font-semibold text-[#111111]">Líquido para relatório</span>
+                <strong className="text-lg font-black text-emerald-700">
+                  {money(valorLiquido)}
                 </strong>
               </div>
 

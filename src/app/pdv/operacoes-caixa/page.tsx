@@ -212,6 +212,43 @@ function valorBaseRegistro(registro: RegistroCaixa) {
   return registro.valorBruto || registro.valor || 0;
 }
 
+type PagamentoCaixa = {
+  forma: string;
+  valor: number;
+};
+
+function pagamentosDoRegistro(registro: RegistroCaixa): PagamentoCaixa[] {
+  const pagamentosRaw = Array.isArray(registro.raw.pagamentos)
+    ? (registro.raw.pagamentos as RegistroRaw[])
+    : Array.isArray(registro.raw.formasPagamento)
+    ? (registro.raw.formasPagamento as RegistroRaw[])
+    : [];
+
+  if (pagamentosRaw.length > 0) {
+    return pagamentosRaw
+      .map((pagamento) => ({
+        forma:
+          asString(pagamento.forma) ||
+          asString(pagamento.formaPagamento) ||
+          asString(pagamento.tipo) ||
+          "Não informado",
+        valor:
+          asNumber(pagamento.valorPago) ||
+          asNumber(pagamento.valor) ||
+          asNumber(pagamento.valorBruto) ||
+          0,
+      }))
+      .filter((pagamento) => pagamento.valor > 0);
+  }
+
+  return [
+    {
+      forma: registro.formaPagamento,
+      valor: Math.abs(valorBaseRegistro(registro)),
+    },
+  ].filter((pagamento) => pagamento.valor > 0);
+}
+
 function valorExibicaoRegistro(registro: RegistroCaixa) {
   const status = normalizeText(registro.status);
   const valor = Math.abs(valorBaseRegistro(registro));
@@ -341,20 +378,23 @@ export default function OperacoesCaixaPage() {
 
     registrosDoCaixaAtual.forEach((registro) => {
       const status = normalizeText(registro.status);
-      const forma = normalizeText(registro.formaPagamento);
-      const valor = Math.abs(valorBaseRegistro(registro));
 
       if (status.includes("fechamento")) {
         return;
       }
 
       if (status.includes("finalizado")) {
-        if (forma.includes("dinheiro")) dinheiro += valor;
-        else if (forma.includes("debito") || forma.includes("débito"))
-          debito += valor;
-        else if (forma.includes("credito") || forma.includes("crédito"))
-          credito += valor;
-        else if (forma.includes("pix")) pix += valor;
+        pagamentosDoRegistro(registro).forEach((pagamento) => {
+          const forma = normalizeText(pagamento.forma);
+          const valor = Math.abs(pagamento.valor);
+
+          if (forma.includes("dinheiro")) dinheiro += valor;
+          else if (forma.includes("debito") || forma.includes("débito"))
+            debito += valor;
+          else if (forma.includes("credito") || forma.includes("crédito"))
+            credito += valor;
+          else if (forma.includes("pix")) pix += valor;
+        });
       }
 
       if (status.includes("refor")) {
@@ -699,7 +739,7 @@ export default function OperacoesCaixaPage() {
         registro.status,
         registro.tipoDocumento,
         registro.consumidor,
-        registro.formaPagamento,
+        asString(registro.raw.formaPagamentoDetalhada) || registro.formaPagamento,
         registro.senha,
         money(registro.valorBruto || registro.valor),
         registro.observacao,
@@ -708,6 +748,12 @@ export default function OperacoesCaixaPage() {
     ];
 
     baixarCsv(`operacoes-caixa-${todayInputDate()}.csv`, linhas);
+  }
+
+  async function abrirPainelAdmin() {
+    await fetch("/api/logout", { method: "POST" }).catch(() => null);
+    localStorage.removeItem("gestor-restaurante-usuario");
+    window.location.href = "/login?adm=1&redirect=/";
   }
 
   return (
@@ -775,13 +821,14 @@ export default function OperacoesCaixaPage() {
               Clientes
             </button>
 
-            <a
-              href="/"
+            <button
+              type="button"
+              onClick={abrirPainelAdmin}
               className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
             >
-              <span className="text-lg">🔄</span>
+              <span className="text-lg">🔐</span>
               Painel
-            </a>
+            </button>
           </nav>
         </aside>
 
@@ -845,6 +892,8 @@ export default function OperacoesCaixaPage() {
                 <option>PIX</option>
                 <option>Débito</option>
                 <option>Crédito</option>
+                <option>Correntista</option>
+                <option>Dividido</option>
                 <option>Conferência</option>
               </select>
 
