@@ -1,169 +1,174 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Colaborador,
+  LS_FOLHA,
+  LS_SAIDAS,
+  RegistroFinanceiro,
+  buscarFinanceiroSupabase,
+  dataDoRegistro,
+  deduplicarPorId,
+  formatarMoeda,
+  lerArrayLocalStorage,
+  numeroSeguro,
+  salvarArrayLocalStorage,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
-type StatusSaida = "Pago" | "Pendente" | "Vencido";
-
-type Saida = {
+type ContaPagarView = {
   id: string;
+  origem: "saida" | "folha";
   data: string;
   categoria: string;
   descricao: string;
   formaPagamento: string;
+  status: "Pendente" | "Vencido" | "Atrasado";
   valor: number;
-  status: StatusSaida;
+  raw: RegistroFinanceiro;
 };
 
-const STORAGE_KEY = "gestor-restaurante-saidas";
-
-function formatarMoeda(valor: number) {
-  return valor.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-}
 
 function formatarData(data: string) {
   if (!data) return "-";
-
-  const [ano, mes, dia] = data.split("-");
-
-  if (!ano || !mes || !dia) return data;
-
-  return `${dia}/${mes}/${ano}`;
+  return data.split("-").reverse().join("/");
 }
 
-function MenuLateral() {
-  return (
-    <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
-  );
+function valorRegistro(item: RegistroFinanceiro) {
+  return numeroSeguro(item.valor) || numeroSeguro(item.valorLiquido) || numeroSeguro(item.valorBruto);
 }
+
+function statusAberto(item: RegistroFinanceiro) {
+  const status = String(item.status || "").toLowerCase();
+  return status === "pendente" || status === "vencido" || status === "atrasado";
+}
+
+
+function hojeISO() {
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  return `${ano}-${mes}-${dia}`;
+}
+
+function dataPagamentoDoMes(competencia: string, diaPagamento: number) {
+  const [ano, mes] = competencia.split("-").map(Number);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const dia = Math.min(Math.max(Math.trunc(diaPagamento || 5), 1), ultimoDia);
+  return `${competencia}-${String(dia).padStart(2, "0")}`;
+}
+
+function gerarFolhaMensal(colaboradores: Colaborador[], folhaAtual: RegistroFinanceiro[]) {
+  const competencia = hojeISO().slice(0, 7);
+  const idsAtuais = new Set(folhaAtual.map((item) => String(item.id)));
+  const hoje = hojeISO();
+  const novos = colaboradores
+    .filter((colaborador) => colaborador.ativo !== false && numeroSeguro(colaborador.salarioMensal) > 0)
+    .map((colaborador) => {
+      const diaPagamento = numeroSeguro(colaborador.diaPagamento) || 5;
+      const data = dataPagamentoDoMes(competencia, diaPagamento);
+      const id = `folha-colaborador-${colaborador.id}-${competencia}`;
+
+      return {
+        id,
+        data,
+        nome: colaborador.nome,
+        funcao: colaborador.funcao || "Outros",
+        tipoPagamento: "Salário fixo",
+        descricao: `Salário mensal automático de ${competencia.split("-").reverse().join("/")}`,
+        status: data < hoje ? "Atrasado" : "Pendente",
+        valor: numeroSeguro(colaborador.salarioMensal),
+        colaboradorId: colaborador.id,
+        competencia,
+        diaPagamento,
+        origem: "Colaboradores",
+      };
+    })
+    .filter((item) => !idsAtuais.has(item.id));
+
+  return {
+    todos: deduplicarPorId([...novos, ...folhaAtual]),
+    novos,
+  };
+}
+
 
 export default function ContasAPagarPage() {
-  const [saidas, setSaidas] = useState<Saida[]>([]);
+  const [saidas, setSaidas] = useState<RegistroFinanceiro[]>([]);
+  const [folha, setFolha] = useState<RegistroFinanceiro[]>([]);
+  const [erro, setErro] = useState("");
 
   useEffect(() => {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    let ativo = true;
 
-    if (!dadosSalvos) return;
+    setSaidas(lerArrayLocalStorage<RegistroFinanceiro>(LS_SAIDAS));
+    setFolha(lerArrayLocalStorage<RegistroFinanceiro>(LS_FOLHA));
 
-    try {
-      const dadosConvertidos = JSON.parse(dadosSalvos) as Saida[];
+    buscarFinanceiroSupabase()
+      .then(async (dados) => {
+        if (!ativo) return;
+        const saidasSupabase = dados.saidas || [];
+        const folhaBase = dados.folhaPagamento || [];
+        const { todos: folhaComMensal, novos } = gerarFolhaMensal((dados.colaboradores || []) as Colaborador[], folhaBase);
 
-      if (Array.isArray(dadosConvertidos)) {
-        setSaidas(dadosConvertidos);
-      }
-    } catch {
-      setSaidas([]);
-    }
+        setSaidas(saidasSupabase);
+        setFolha(folhaComMensal);
+        salvarArrayLocalStorage(LS_SAIDAS, saidasSupabase);
+        salvarArrayLocalStorage(LS_FOLHA, folhaComMensal);
+        setErro("");
+
+        if (novos.length > 0) {
+          await salvarFinanceiroSupabase({ folhaPagamento: novos }).catch((error) => {
+            console.error("Não foi possível criar folha mensal automática.", error);
+            setErro("Folha mensal criada localmente, mas não sincronizou com o Supabase.");
+          });
+        }
+      })
+      .catch((error) => {
+        if (!ativo) return;
+        setErro(error instanceof Error ? error.message : "Não consegui carregar o Supabase. Mostrando cache local.");
+      });
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
-  const contas = useMemo(() => {
-    return saidas
-      .filter(
-        (saida) => saida.status === "Pendente" || saida.status === "Vencido"
-      )
-      .sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
-  }, [saidas]);
+  const contas = useMemo<ContaPagarView[]>(() => {
+    const listaSaidas = saidas.filter(statusAberto).map((saida) => ({
+      id: String(saida.id),
+      origem: "saida" as const,
+      data: dataDoRegistro(saida),
+      categoria: String(saida.categoria || "Saída"),
+      descricao: String(saida.descricao || "Saída cadastrada"),
+      formaPagamento: String(saida.formaPagamento || saida.forma || "-"),
+      status: String(saida.status || "Pendente") as ContaPagarView["status"],
+      valor: valorRegistro(saida),
+      raw: saida,
+    }));
+
+    const listaFolha = folha.filter(statusAberto).map((item) => ({
+      id: String(item.id),
+      origem: "folha" as const,
+      data: dataDoRegistro(item),
+      categoria: "Folha de pagamento",
+      descricao: String(item.nome || item.descricao || "Pagamento da folha"),
+      formaPagamento: String(item.tipoPagamento || "Folha"),
+      status: String(item.status || "Pendente") as ContaPagarView["status"],
+      valor: valorRegistro(item),
+      raw: item,
+    }));
+
+    return [...listaSaidas, ...listaFolha].sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
+  }, [saidas, folha]);
 
   const resumo = useMemo(() => {
-    const totalPendente = contas
-      .filter((conta) => conta.status === "Pendente")
-      .reduce((soma, conta) => soma + conta.valor, 0);
-
-    const totalVencido = contas
-      .filter((conta) => conta.status === "Vencido")
-      .reduce((soma, conta) => soma + conta.valor, 0);
-
+    const totalPendente = contas.filter((conta) => conta.status === "Pendente").reduce((soma, conta) => soma + conta.valor, 0);
+    const totalVencido = contas.filter((conta) => conta.status === "Vencido" || conta.status === "Atrasado").reduce((soma, conta) => soma + conta.valor, 0);
     const totalGeral = contas.reduce((soma, conta) => soma + conta.valor, 0);
-
-    return {
-      totalPendente,
-      totalVencido,
-      totalGeral,
-      quantidade: contas.length,
-    };
+    return { totalPendente, totalVencido, totalGeral, quantidade: contas.length };
   }, [contas]);
 
   const resumoPorCategoria = useMemo(() => {
@@ -171,109 +176,68 @@ export default function ContasAPagarPage() {
       acc[conta.categoria] = (acc[conta.categoria] || 0) + conta.valor;
       return acc;
     }, {});
-
-    return Object.entries(totais)
-      .map(([categoria, total]) => ({
-        categoria,
-        total,
-      }))
-      .sort((a, b) => b.total - a.total);
+    return Object.entries(totais).map(([categoria, total]) => ({ categoria, total })).sort((a, b) => b.total - a.total);
   }, [contas]);
 
-  function marcarComoPago(id: string) {
-    const confirmar = window.confirm("Deseja marcar esta conta como paga?");
-
+  async function marcarComoPago(conta: ContaPagarView) {
+    const confirmar = window.confirm("Deseja marcar esta conta como paga? O valor sairá do saldo real.");
     if (!confirmar) return;
 
-    const novasSaidas = saidas.map((saida) => {
-      if (saida.id === id) {
-        return {
-          ...saida,
-          status: "Pago" as StatusSaida,
-        };
-      }
+    const atualizado = {
+      ...conta.raw,
+      status: "Pago",
+      dataPagamento: new Date().toISOString().slice(0, 10),
+      pagoEm: new Date().toISOString(),
+    };
 
-      return saida;
+    if (conta.origem === "saida") {
+      const novasSaidas = saidas.map((saida) => String(saida.id) === conta.id ? atualizado : saida);
+      setSaidas(novasSaidas);
+      salvarArrayLocalStorage(LS_SAIDAS, novasSaidas);
+      await salvarFinanceiroSupabase({ saida: atualizado }).catch((error) => {
+        console.error("Não foi possível sincronizar saída paga.", error);
+        setErro("Marcado localmente, mas não sincronizou com o Supabase.");
+      });
+      return;
+    }
+
+    const novaFolha = folha.map((item) => String(item.id) === conta.id ? atualizado : item);
+    setFolha(novaFolha);
+    salvarArrayLocalStorage(LS_FOLHA, novaFolha);
+    await salvarFinanceiroSupabase({ folha: atualizado }).catch((error) => {
+      console.error("Não foi possível sincronizar folha paga.", error);
+      setErro("Marcado localmente, mas não sincronizou com o Supabase.");
     });
-
-    setSaidas(novasSaidas);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(novasSaidas));
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <div className="flex min-h-screen">
-        <MenuLateral />
+        <AdminSidebar active="contas-a-pagar" />
 
         <section className="flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mb-8 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-sm font-bold uppercase tracking-[0.35em] text-orange-600">
-                  Financeiro
-                </p>
-
-                <h2 className="mt-2 text-3xl font-black tracking-tight">
-                  Contas a pagar
-                </h2>
-
+                <p className="text-sm font-bold uppercase tracking-[0.35em] text-orange-600">Financeiro</p>
+                <h2 className="mt-2 text-3xl font-black tracking-tight">Contas a pagar</h2>
                 <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
-                  Acompanhe todas as saídas lançadas como pendentes ou vencidas.
-                  Quando uma conta for paga, você pode marcar como paga aqui.
+                  Saídas e folha pendentes/vencidas. Ao marcar como paga, o lançamento passa a sair do saldo líquido real.
                 </p>
+                {erro && <p className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{erro}</p>}
               </div>
 
-              <a
-                href="/saidas"
-                className="rounded-xl bg-slate-950 px-5 py-3 text-center text-sm font-bold text-white shadow-sm transition hover:bg-slate-800"
-              >
-                Nova saída
-              </a>
+              <a href="/saidas" className="rounded-xl bg-slate-950 px-5 py-3 text-center text-sm font-bold text-white shadow-sm transition hover:bg-slate-800">Nova saída</a>
             </div>
           </div>
 
           <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Card titulo="Total a pagar" valor={resumo.totalGeral} detalhe="Pendentes + vencidas" cor="text-red-700" />
+            <Card titulo="Pendentes" valor={resumo.totalPendente} detalhe="Aguardando pagamento" cor="text-amber-700" />
+            <Card titulo="Vencidas/atrasadas" valor={resumo.totalVencido} detalhe="Precisam de atenção" cor="text-red-700" />
             <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-sm font-semibold text-slate-500">
-                Total a pagar
-              </p>
-              <strong className="mt-3 block text-2xl font-black text-red-700">
-                {formatarMoeda(resumo.totalGeral)}
-              </strong>
-              <p className="mt-2 text-xs text-slate-500">
-                Pendentes + vencidas
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-sm font-semibold text-slate-500">
-                Pendentes
-              </p>
-              <strong className="mt-3 block text-2xl font-black text-amber-700">
-                {formatarMoeda(resumo.totalPendente)}
-              </strong>
-              <p className="mt-2 text-xs text-slate-500">
-                Aguardando pagamento
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-sm font-semibold text-slate-500">Vencidas</p>
-              <strong className="mt-3 block text-2xl font-black text-red-700">
-                {formatarMoeda(resumo.totalVencido)}
-              </strong>
-              <p className="mt-2 text-xs text-slate-500">
-                Precisam de atenção
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <p className="text-sm font-semibold text-slate-500">
-                Quantidade
-              </p>
-              <strong className="mt-3 block text-2xl font-black">
-                {resumo.quantidade}
-              </strong>
+              <p className="text-sm font-semibold text-slate-500">Quantidade</p>
+              <strong className="mt-3 block text-2xl font-black">{resumo.quantidade}</strong>
               <p className="mt-2 text-xs text-slate-500">Contas em aberto</p>
             </div>
           </div>
@@ -282,88 +246,42 @@ export default function ContasAPagarPage() {
             <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <div className="mb-5">
                 <h3 className="text-xl font-black">Lista de contas</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Contas pendentes e vencidas cadastradas na tela de Saídas.
-                </p>
+                <p className="mt-1 text-sm text-slate-500">Saídas e folha de pagamento em aberto.</p>
               </div>
 
               {contas.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
-                  <p className="text-sm font-bold text-slate-700">
-                    Nenhuma conta a pagar.
-                  </p>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    Para aparecer aqui, cadastre uma saída com status Pendente ou
-                    Vencido.
-                  </p>
-
-                  <a
-                    href="/saidas"
-                    className="mt-5 inline-flex rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-orange-600"
-                  >
-                    Cadastrar saída
-                  </a>
+                  <p className="text-sm font-bold text-slate-700">Nenhuma conta a pagar.</p>
+                  <p className="mt-1 text-sm text-slate-500">Cadastre uma saída/folha com status Pendente, Vencido ou Atrasado.</p>
+                  <a href="/saidas" className="mt-5 inline-flex rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-orange-600">Cadastrar saída</a>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[850px] border-collapse text-left text-sm">
+                  <table className="w-full min-w-[920px] border-collapse text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-slate-500">
-                        <th className="px-4 py-3 font-bold">Vencimento</th>
+                        <th className="px-4 py-3 font-bold">Data</th>
+                        <th className="px-4 py-3 font-bold">Origem</th>
                         <th className="px-4 py-3 font-bold">Categoria</th>
                         <th className="px-4 py-3 font-bold">Descrição</th>
-                        <th className="px-4 py-3 font-bold">Pagamento</th>
                         <th className="px-4 py-3 font-bold">Status</th>
-                        <th className="px-4 py-3 text-right font-bold">
-                          Valor
-                        </th>
-                        <th className="px-4 py-3 text-right font-bold">
-                          Ação
-                        </th>
+                        <th className="px-4 py-3 text-right font-bold">Valor</th>
+                        <th className="px-4 py-3 text-right font-bold">Ação</th>
                       </tr>
                     </thead>
-
                     <tbody>
                       {contas.map((conta) => (
-                        <tr
-                          key={conta.id}
-                          className="border-b border-slate-100 transition hover:bg-slate-50"
-                        >
-                          <td className="px-4 py-4 font-medium">
-                            {formatarData(conta.data)}
-                          </td>
-
+                        <tr key={`${conta.origem}-${conta.id}`} className="border-b border-slate-100 transition hover:bg-slate-50">
+                          <td className="px-4 py-4 font-medium">{formatarData(conta.data)}</td>
+                          <td className="px-4 py-4">{conta.origem === "folha" ? "Folha" : "Saída"}</td>
                           <td className="px-4 py-4">{conta.categoria}</td>
-
                           <td className="px-4 py-4">{conta.descricao}</td>
-
-                          <td className="px-4 py-4">{conta.formaPagamento}</td>
-
                           <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-black ${
-                                conta.status === "Pendente"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : "bg-red-100 text-red-700"
-                              }`}
-                            >
-                              {conta.status}
-                            </span>
+                            <span className={`rounded-full px-3 py-1 text-xs font-black ${conta.status === "Pendente" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{conta.status}</span>
                           </td>
-
-                          <td className="px-4 py-4 text-right font-black text-red-700">
-                            {formatarMoeda(conta.valor)}
-                          </td>
-
+                          <td className="px-4 py-4 text-right font-black text-red-700">{formatarMoeda(conta.valor)}</td>
                           <td className="px-4 py-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => marcarComoPago(conta.id)}
-                              className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100"
-                            >
-                              Marcar pago
-                            </button>
+                            <button type="button" onClick={() => marcarComoPago(conta)} className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100">Marcar pago</button>
                           </td>
                         </tr>
                       ))}
@@ -376,45 +294,21 @@ export default function ContasAPagarPage() {
             <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <div className="mb-5">
                 <h3 className="text-xl font-black">Resumo por categoria</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Veja quais categorias concentram mais contas em aberto.
-                </p>
+                <p className="mt-1 text-sm text-slate-500">Onde estão as contas em aberto.</p>
               </div>
-
               {resumoPorCategoria.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
-                  Nenhuma categoria com conta em aberto.
-                </div>
+                <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Nenhuma categoria com conta em aberto.</div>
               ) : (
                 <div className="grid gap-4">
                   {resumoPorCategoria.map((item) => {
-                    const percentual =
-                      resumo.totalGeral > 0
-                        ? (item.total / resumo.totalGeral) * 100
-                        : 0;
-
+                    const percentual = resumo.totalGeral > 0 ? (item.total / resumo.totalGeral) * 100 : 0;
                     return (
                       <div key={item.categoria}>
                         <div className="mb-2 flex items-center justify-between gap-3">
-                          <span className="text-sm font-bold">
-                            {item.categoria}
-                          </span>
-
-                          <span className="text-sm text-slate-600">
-                            {formatarMoeda(item.total)}
-                          </span>
+                          <span className="text-sm font-bold">{item.categoria}</span>
+                          <span className="text-sm text-slate-600">{formatarMoeda(item.total)}</span>
                         </div>
-
-                        <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className="h-full rounded-full bg-orange-500"
-                            style={{ width: `${percentual}%` }}
-                          />
-                        </div>
-
-                        <p className="mt-2 text-xs text-slate-500">
-                          {percentual.toFixed(1)}% do total em aberto
-                        </p>
+                        <div className="h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-orange-500" style={{ width: `${percentual}%` }} /></div>
                       </div>
                     );
                   })}
@@ -425,5 +319,15 @@ export default function ContasAPagarPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+function Card({ titulo, valor, detalhe, cor }: { titulo: string; valor: number; detalhe: string; cor: string }) {
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <p className="text-sm font-semibold text-slate-500">{titulo}</p>
+      <strong className={`mt-3 block text-2xl font-black ${cor}`}>{formatarMoeda(valor)}</strong>
+      <p className="mt-2 text-xs text-slate-500">{detalhe}</p>
+    </div>
   );
 }

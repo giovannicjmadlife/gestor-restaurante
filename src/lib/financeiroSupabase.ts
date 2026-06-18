@@ -27,16 +27,41 @@ export type Colaborador = {
   ativo: boolean;
   telefone?: string;
   observacoes?: string;
+  salarioMensal?: number;
+  diaPagamento?: number;
+  funcao?: string;
   criadoEm?: string;
   atualizadoEm?: string;
 };
 
 export type RegistroFinanceiro = Record<string, any>;
 
+export type TipoTaxaFinanceira = "Percentual" | "Valor fixo" | string;
+
+export type TaxaFinanceira = {
+  id?: string;
+  categoria?: "maquininha" | "delivery" | "entrega" | string;
+  nome?: string;
+  tipo?: TipoTaxaFinanceira;
+  valor?: number | string;
+  percentual?: number | string;
+  taxa?: number | string;
+  porcentagem?: number | string;
+  ativo?: boolean;
+};
+
+export type TaxasFinanceirasPayload = {
+  maquininhas: TaxaFinanceira[];
+  delivery: TaxaFinanceira[];
+  entrega: TaxaFinanceira | null;
+  todas: TaxaFinanceira[];
+};
+
 export const LS_ENTRADAS = "gestor-restaurante-entradas";
 export const LS_SAIDAS = "gestor-restaurante-saidas";
 export const LS_CONTAS_RECEBER = "gestor-restaurante-contas-receber";
 export const LS_FOLHA = "gestor-restaurante-folha-pagamento";
+export const LS_INVESTIMENTOS = "gestor-restaurante-investimentos";
 export const LS_VENDAS_DETALHADAS = "gestor-restaurante-vendas-detalhadas";
 export const LS_COLABORADORES = "gestor-restaurante-colaboradores";
 
@@ -169,6 +194,147 @@ export function formaPagamentoNormalizada(forma: unknown) {
   return String(forma || "Não informado");
 }
 
+export function valorDaTaxaCadastro(taxa: TaxaFinanceira | null | undefined) {
+  if (!taxa || taxa.ativo === false) return 0;
+
+  return (
+    numeroSeguro(taxa.valor) ||
+    numeroSeguro(taxa.percentual) ||
+    numeroSeguro(taxa.taxa) ||
+    numeroSeguro(taxa.porcentagem)
+  );
+}
+
+export function calcularValorTaxaCadastroFinanceiro(
+  valorBase: number,
+  taxa: TaxaFinanceira | null | undefined
+) {
+  const valorTaxaCadastro = valorDaTaxaCadastro(taxa);
+  if (!taxa || valorBase <= 0 || valorTaxaCadastro <= 0) return 0;
+
+  const tipo = normalizarTexto(taxa.tipo || "Percentual");
+  if (tipo.includes("fixo") || tipo.includes("valor")) {
+    return arredondar2(valorTaxaCadastro);
+  }
+
+  return arredondar2((valorBase * valorTaxaCadastro) / 100);
+}
+
+export function buscarTaxaMaquininhaPorForma(
+  forma: unknown,
+  taxasMaquininhas: TaxaFinanceira[] = []
+) {
+  const formaNormalizada = formaPagamentoNormalizada(forma);
+
+  if (
+    formaNormalizada === "Dinheiro" ||
+    formaNormalizada === "Correntista" ||
+    formaNormalizada === "Dividido"
+  ) {
+    return null;
+  }
+
+  const alvo =
+    formaNormalizada === "Crédito"
+      ? ["credito", "crédito", "cartao credito", "cartão crédito"]
+      : formaNormalizada === "Débito"
+        ? ["debito", "débito", "cartao debito", "cartão débito"]
+        : ["pix"];
+
+  return (
+    taxasMaquininhas.find((taxa) => {
+      if (!taxa || taxa.ativo === false) return false;
+      const texto = normalizarTexto(
+        [taxa.nome, taxa.categoria, taxa.tipo, taxa.valor, taxa.percentual, taxa.taxa, taxa.porcentagem].join(" ")
+      );
+      return alvo.some((palavra) => texto.includes(normalizarTexto(palavra)));
+    }) || null
+  );
+}
+
+export function registroEhDelivery(registro: RegistroFinanceiro) {
+  const texto = normalizarTexto(
+    [
+      registro.atendimentoTipo,
+      registro.atendimento_tipo,
+      registro.tipoVenda,
+      registro.tipo_venda,
+      registro.categoria,
+      registro.origem,
+      registro.descricao,
+      registro.canal,
+      registro.delivery,
+    ].join(" ")
+  );
+
+  return texto.includes("delivery") || texto.includes("ifood") || texto.includes("aiqfome");
+}
+
+export function taxaRegistroComCadastro(
+  registro: RegistroFinanceiro,
+  taxasMaquininhas: TaxaFinanceira[] = [],
+  taxasDelivery: TaxaFinanceira[] = []
+) {
+  const taxaJaSalva = taxaRegistro(registro);
+  if (taxaJaSalva > 0) return taxaJaSalva;
+
+  const pagamentos = pagamentosDoRegistro(registro);
+  const bruto = valorBrutoRegistro(registro);
+
+  let taxaMaquininha = 0;
+
+  if (pagamentos.length > 1) {
+    taxaMaquininha = pagamentos.reduce((total, pagamento) => {
+      const taxa = buscarTaxaMaquininhaPorForma(pagamento.forma, taxasMaquininhas);
+      return total + calcularValorTaxaCadastroFinanceiro(numeroSeguro(pagamento.valorPago), taxa);
+    }, 0);
+  } else {
+    const forma =
+      pagamentos[0]?.forma ||
+      registro.formaPagamento ||
+      registro.formaRecebimento ||
+      registro.forma;
+    const taxa = buscarTaxaMaquininhaPorForma(forma, taxasMaquininhas);
+    taxaMaquininha = calcularValorTaxaCadastroFinanceiro(bruto, taxa);
+  }
+
+  const taxaDelivery = registroEhDelivery(registro)
+    ? calcularValorTaxaCadastroFinanceiro(bruto, taxasDelivery.find((taxa) => taxa.ativo !== false) || null)
+    : 0;
+
+  return arredondar2(taxaMaquininha + taxaDelivery);
+}
+
+export function valorLiquidoRegistroComCadastro(
+  registro: RegistroFinanceiro,
+  taxasMaquininhas: TaxaFinanceira[] = [],
+  taxasDelivery: TaxaFinanceira[] = []
+) {
+  const taxa = taxaRegistroComCadastro(registro, taxasMaquininhas, taxasDelivery);
+  return arredondar2(valorBrutoRegistro(registro) - taxa);
+}
+
+export async function buscarTaxasSupabase(): Promise<TaxasFinanceirasPayload> {
+  const resposta = await fetch('/api/taxas', {
+    method: 'GET',
+    cache: 'no-store',
+  });
+
+  if (!resposta.ok) {
+    const detalhe = await resposta.text().catch(() => '');
+    throw new Error(detalhe || 'Erro ao buscar taxas no Supabase.');
+  }
+
+  const dados = await resposta.json();
+
+  return {
+    maquininhas: Array.isArray(dados.maquininhas) ? dados.maquininhas : [],
+    delivery: Array.isArray(dados.delivery) ? dados.delivery : [],
+    entrega: dados.entrega || null,
+    todas: Array.isArray(dados.todas) ? dados.todas : [],
+  };
+}
+
 export function valorBrutoRegistro(registro: RegistroFinanceiro) {
   return arredondar2(
     numeroSeguro(registro.valorBruto) ||
@@ -248,7 +414,18 @@ export function taxaRegistro(registro: RegistroFinanceiro) {
     0
   );
 
-  if (taxaPagamentos > 0) return arredondar2(taxaPagamentos);
+  const taxaSalva =
+    numeroSeguro(registro.taxaDescontada) ||
+    numeroSeguro(registro.valorTaxas) ||
+    numeroSeguro(registro.valor_taxas) ||
+    arredondar2(
+      numeroSeguro(registro.taxaMaquininhaDescontada) +
+        numeroSeguro(registro.taxaDeliveryDescontada)
+    );
+
+  if (taxaSalva > 0 || taxaPagamentos > 0) {
+    return arredondar2(Math.max(taxaSalva, taxaPagamentos));
+  }
 
   const bruto = valorBrutoRegistro(registro);
   const liquido = numeroSeguro(registro.valorLiquido);
@@ -332,6 +509,7 @@ export type FinanceiroPayloadSupabase = {
   saidas?: RegistroFinanceiro[];
   contasReceber?: RegistroFinanceiro[];
   folhaPagamento?: RegistroFinanceiro[];
+  investimentos?: RegistroFinanceiro[];
   colaboradores?: Colaborador[];
 };
 
@@ -389,6 +567,7 @@ export async function importarFinanceiroLocalParaSupabase() {
     saidas: lerArrayLocalStorage<RegistroFinanceiro>(LS_SAIDAS),
     contasReceber: lerArrayLocalStorage<RegistroFinanceiro>(LS_CONTAS_RECEBER),
     folhaPagamento: lerArrayLocalStorage<RegistroFinanceiro>(LS_FOLHA),
+    investimentos: lerArrayLocalStorage<RegistroFinanceiro>(LS_INVESTIMENTOS),
     colaboradores: lerArrayLocalStorage<Colaborador>(LS_COLABORADORES),
   };
 
@@ -398,6 +577,7 @@ export async function importarFinanceiroLocalParaSupabase() {
     payload.saidas.length +
     payload.contasReceber.length +
     payload.folhaPagamento.length +
+    payload.investimentos.length +
     payload.colaboradores.length;
 
   if (total === 0) return { ok: true, total: 0 };
@@ -411,6 +591,43 @@ export async function importarFinanceiroLocalParaSupabase() {
   if (!resposta.ok) {
     const detalhe = await resposta.text().catch(() => '');
     throw new Error(detalhe || 'Erro ao importar dados locais para o Supabase.');
+  }
+
+  return resposta.json();
+}
+
+export async function salvarFinanceiroSupabase(payload: FinanceiroPayloadSupabase & {
+  entrada?: RegistroFinanceiro;
+  vendaDetalhada?: RegistroFinanceiro;
+  saida?: RegistroFinanceiro;
+  contaReceber?: RegistroFinanceiro | null;
+  folha?: RegistroFinanceiro;
+  investimento?: RegistroFinanceiro;
+}) {
+  const resposta = await fetch('/api/financeiro', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resposta.ok) {
+    const detalhe = await resposta.text().catch(() => '');
+    throw new Error(detalhe || 'Erro ao salvar financeiro no Supabase.');
+  }
+
+  return resposta.json();
+}
+
+export async function removerLancamentoFinanceiroSupabase(tipo: string, id: string) {
+  const resposta = await fetch('/api/financeiro', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo, id }),
+  });
+
+  if (!resposta.ok) {
+    const detalhe = await resposta.text().catch(() => '');
+    throw new Error(detalhe || 'Erro ao remover lançamento no Supabase.');
   }
 
   return resposta.json();

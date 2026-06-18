@@ -1,6 +1,18 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Colaborador,
+  LS_FOLHA,
+  buscarFinanceiroSupabase,
+  deduplicarPorId,
+  lerArrayLocalStorage,
+  numeroSeguro,
+  removerLancamentoFinanceiroSupabase,
+  salvarArrayLocalStorage,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
 type StatusPagamento = "Pago" | "Pendente" | "Atrasado";
 
@@ -35,9 +47,15 @@ type FolhaItem = {
   descricao: string;
   status: StatusPagamento;
   valor: number;
+  colaboradorId?: string;
+  competencia?: string;
+  diaPagamento?: number;
+  origem?: string;
+  dataPagamento?: string;
+  pagoEm?: string;
 };
 
-const STORAGE_KEY = "gestor-restaurante-folha-pagamento";
+const STORAGE_KEY = LS_FOLHA;
 
 const funcoes: FuncaoFuncionario[] = [
   "Cozinha",
@@ -80,8 +98,56 @@ function criarId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+
+function dataPagamentoDoMes(competencia: string, diaPagamento: number) {
+  const [ano, mes] = competencia.split("-").map(Number);
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const dia = Math.min(Math.max(Math.trunc(diaPagamento || 5), 1), ultimoDia);
+  return `${competencia}-${String(dia).padStart(2, "0")}`;
+}
+
+function normalizarFuncao(valor: unknown): FuncaoFuncionario {
+  const texto = String(valor || "");
+  return funcoes.includes(texto as FuncaoFuncionario) ? (texto as FuncaoFuncionario) : "Outros";
+}
+
+function gerarFolhaMensal(colaboradores: Colaborador[], itensAtuais: FolhaItem[]) {
+  const competencia = hojeISO().slice(0, 7);
+  const idsAtuais = new Set(itensAtuais.map((item) => item.id));
+  const hoje = hojeISO();
+  const novosItens = colaboradores
+    .filter((colaborador) => colaborador.ativo !== false && numeroSeguro(colaborador.salarioMensal) > 0)
+    .map((colaborador) => {
+      const diaPagamento = numeroSeguro(colaborador.diaPagamento) || 5;
+      const data = dataPagamentoDoMes(competencia, diaPagamento);
+      const id = `folha-colaborador-${colaborador.id}-${competencia}`;
+
+      return {
+        id,
+        data,
+        nome: colaborador.nome,
+        funcao: normalizarFuncao(colaborador.funcao),
+        tipoPagamento: "Salário fixo" as TipoPagamento,
+        descricao: `Salário mensal automático de ${competencia.split("-").reverse().join("/")}`,
+        status: data < hoje ? "Atrasado" as StatusPagamento : "Pendente" as StatusPagamento,
+        valor: numeroSeguro(colaborador.salarioMensal),
+        colaboradorId: colaborador.id,
+        competencia,
+        diaPagamento: Number(diaPagamento),
+        origem: "Colaboradores",
+      };
+    })
+    .filter((item) => !idsAtuais.has(item.id));
+
+  return {
+    todos: deduplicarPorId([...novosItens, ...itensAtuais]) as FolhaItem[],
+    novos: novosItens,
+  };
+}
+
 export default function FolhaDePagamentoPage() {
   const [itens, setItens] = useState<FolhaItem[]>([]);
+  const [dadosCarregados, setDadosCarregados] = useState(false);
   const [data, setData] = useState(hojeISO());
   const [nome, setNome] = useState("");
   const [funcao, setFuncao] = useState<FuncaoFuncionario>("Cozinha");
@@ -92,21 +158,49 @@ export default function FolhaDePagamentoPage() {
   const [valor, setValor] = useState("");
 
   useEffect(() => {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    let ativo = true;
 
-    if (dadosSalvos) {
+    async function carregarFolha() {
+      const itensLocais = lerArrayLocalStorage<FolhaItem>(STORAGE_KEY);
+
+      if (ativo) {
+        setItens(itensLocais);
+      }
+
       try {
-        const dadosConvertidos = JSON.parse(dadosSalvos) as FolhaItem[];
-        setItens(dadosConvertidos);
-      } catch {
-        setItens([]);
+        const dados = await buscarFinanceiroSupabase();
+        const itensSupabase = (dados.folhaPagamento || []) as FolhaItem[];
+        const base = itensSupabase.length > 0
+          ? (deduplicarPorId(itensSupabase) as FolhaItem[])
+          : itensLocais;
+        const { todos, novos } = gerarFolhaMensal((dados.colaboradores || []) as Colaborador[], base);
+
+        if (!ativo) return;
+
+        setItens(todos);
+        salvarArrayLocalStorage(STORAGE_KEY, todos);
+
+        if (novos.length > 0) {
+          await salvarFinanceiroSupabase({ folhaPagamento: novos });
+        }
+      } catch (erro) {
+        console.warn("Não foi possível carregar folha do Supabase.", erro);
+      } finally {
+        if (ativo) setDadosCarregados(true);
       }
     }
+
+    carregarFolha();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(itens));
-  }, [itens]);
+    if (!dadosCarregados) return;
+    salvarArrayLocalStorage(STORAGE_KEY, itens);
+  }, [itens, dadosCarregados]);
 
   const resumo = useMemo(() => {
     const totalGeral = itens.reduce((acc, item) => acc + item.valor, 0);
@@ -157,7 +251,7 @@ export default function FolhaDePagamentoPage() {
     setValor("");
   }
 
-  function cadastrarPagamento(event: React.FormEvent<HTMLFormElement>) {
+  async function cadastrarPagamento(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorNumerico = Number(valor.replace(",", "."));
@@ -176,13 +270,22 @@ export default function FolhaDePagamentoPage() {
       descricao: descricao.trim(),
       status,
       valor: valorNumerico,
+      ...(status === "Pago" ? { dataPagamento: data, pagoEm: new Date().toISOString() } : {}),
     };
 
     setItens((listaAtual) => [novoItem, ...listaAtual]);
+
+    try {
+      await salvarFinanceiroSupabase({ folha: novoItem });
+    } catch (erro) {
+      console.warn("Folha salva localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Salvei no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
+
     limparFormulario();
   }
 
-  function excluirItem(id: string) {
+  async function excluirItem(id: string) {
     const confirmar = confirm("Deseja realmente excluir este lançamento?");
 
     if (!confirmar) {
@@ -190,101 +293,43 @@ export default function FolhaDePagamentoPage() {
     }
 
     setItens((listaAtual) => listaAtual.filter((item) => item.id !== id));
+
+    try {
+      await removerLancamentoFinanceiroSupabase("folha", id);
+    } catch (erro) {
+      console.warn("Folha excluída localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Excluí no navegador, mas não consegui excluir do Supabase agora.");
+    }
   }
 
-  function marcarComoPago(id: string) {
+  async function marcarComoPago(id: string) {
+    const itemOriginal = itens.find((item) => item.id === id);
+
+    if (!itemOriginal) return;
+
+    const atualizado: FolhaItem = {
+      ...itemOriginal,
+      status: "Pago",
+      dataPagamento: hojeISO(),
+      pagoEm: new Date().toISOString(),
+    };
+
     setItens((listaAtual) =>
-      listaAtual.map((item) =>
-        item.id === id ? { ...item, status: "Pago" } : item
-      )
+      listaAtual.map((item) => (item.id === id ? atualizado : item))
     );
+
+    try {
+      await salvarFinanceiroSupabase({ folha: atualizado });
+    } catch (erro) {
+      console.warn("Pagamento da folha salvo localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Marquei como pago no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
+        <AdminSidebar active="folha-de-pagamento" />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8 flex flex-col gap-2">
@@ -471,8 +516,7 @@ export default function FolhaDePagamentoPage() {
                       Lançamentos da folha
                     </h2>
                     <p className="text-sm text-slate-500">
-                      Todos os pagamentos cadastrados ficam salvos neste
-                      navegador.
+                      Pagamentos manuais e salários mensais dos colaboradores ficam salvos no Supabase.
                     </p>
                   </div>
                 </div>

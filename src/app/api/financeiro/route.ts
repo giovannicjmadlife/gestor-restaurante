@@ -26,6 +26,93 @@ function arredondar2(valor: number) {
   return Number((valor || 0).toFixed(2));
 }
 
+function normalizarTexto(valor: any) {
+  return String(valor || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function formaPagamentoNormalizada(forma: any) {
+  const texto = normalizarTexto(forma);
+  if (texto.includes("dinheiro")) return "Dinheiro";
+  if (texto.includes("pix")) return "PIX";
+  if (texto.includes("debito")) return "Débito";
+  if (texto.includes("credito")) return "Crédito";
+  if (texto.includes("correntista") || texto.includes("fiado") || texto.includes("conta")) return "Correntista";
+  if (texto.includes("dividido") || texto.includes("misto")) return "Dividido";
+  return String(forma || "Não informado");
+}
+
+type TaxasCalculo = {
+  maquininhas: Registro[];
+  delivery: Registro[];
+};
+
+function valorDaTaxaCadastro(taxa: Registro | null | undefined) {
+  if (!taxa || taxa.ativo === false) return 0;
+  return numeroSeguro(taxa.valor) || numeroSeguro(taxa.percentual) || numeroSeguro(taxa.taxa) || numeroSeguro(taxa.porcentagem);
+}
+
+function calcularValorTaxaCadastro(valorBase: number, taxa: Registro | null | undefined) {
+  const valorTaxa = valorDaTaxaCadastro(taxa);
+  if (!taxa || valorBase <= 0 || valorTaxa <= 0) return 0;
+  const tipo = normalizarTexto(taxa.tipo || taxa.tipoTaxa || "Percentual");
+  if (tipo.includes("fixo") || tipo.includes("valor")) return arredondar2(valorTaxa);
+  return arredondar2((valorBase * valorTaxa) / 100);
+}
+
+function buscarTaxaMaquininhaPorForma(forma: any, taxasMaquininhas: Registro[] = []) {
+  const formaNormalizada = formaPagamentoNormalizada(forma);
+  if (formaNormalizada === "Dinheiro" || formaNormalizada === "Correntista" || formaNormalizada === "Dividido") return null;
+
+  const alvo =
+    formaNormalizada === "Crédito"
+      ? ["credito", "crédito"]
+      : formaNormalizada === "Débito"
+        ? ["debito", "débito"]
+        : ["pix"];
+
+  return taxasMaquininhas.find((taxa) => {
+    if (!taxa || taxa.ativo === false) return false;
+    const texto = normalizarTexto([taxa.nome, taxa.categoria, taxa.tipo, taxa.valor, taxa.percentual, taxa.taxa, taxa.porcentagem].join(" "));
+    return alvo.some((item) => texto.includes(normalizarTexto(item)));
+  }) || null;
+}
+
+function registroEhDelivery(registro: Registro) {
+  const texto = normalizarTexto([
+    registro.atendimentoTipo,
+    registro.atendimento_tipo,
+    registro.tipoVenda,
+    registro.tipo_venda,
+    registro.categoria,
+    registro.origem,
+    registro.descricao,
+    registro.canal,
+  ].join(" "));
+
+  return texto.includes("delivery") || texto.includes("ifood") || texto.includes("aiqfome");
+}
+
+async function buscarTaxasCalculo(): Promise<TaxasCalculo> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("financeiro_taxas")
+    .select("id,categoria,nome,tipo,valor,ativo,dados")
+    .eq("restaurante_id", RESTAURANTE_ID);
+
+  if (error) return { maquininhas: [], delivery: [] };
+
+  const taxas = (data || []).map((row: Registro) => ({ ...(row.dados || {}), ...row }));
+
+  return {
+    maquininhas: taxas.filter((taxa: Registro) => String(taxa.categoria) === "maquininha" && taxa.ativo !== false),
+    delivery: taxas.filter((taxa: Registro) => String(taxa.categoria) === "delivery" && taxa.ativo !== false),
+  };
+}
+
 function hojeISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -64,7 +151,7 @@ function desconto(registro: Registro) {
   return arredondar2(numeroSeguro(registro.descontoValor) || numeroSeguro(registro.desconto));
 }
 
-function pagamentosDoRegistro(registro: Registro) {
+function pagamentosDoRegistro(registro: Registro, taxasCalculo: TaxasCalculo = { maquininhas: [], delivery: [] }) {
   const pagamentosOriginais = Array.isArray(registro?.pagamentos)
     ? registro.pagamentos
     : Array.isArray(registro?.formasPagamento)
@@ -77,17 +164,21 @@ function pagamentosDoRegistro(registro: Registro) {
         const valorPago = arredondar2(
           numeroSeguro(pagamento.valorPago) || numeroSeguro(pagamento.valor) || numeroSeguro(pagamento.valorBruto)
         );
-        const valorTaxa = arredondar2(numeroSeguro(pagamento.valorTaxa) || numeroSeguro(pagamento.taxaDescontada));
+        const forma = formaPagamentoNormalizada(pagamento.forma || pagamento.formaPagamento || "Não informado");
+        const taxaCadastro = buscarTaxaMaquininhaPorForma(forma, taxasCalculo.maquininhas);
+        const valorTaxaSalva = arredondar2(numeroSeguro(pagamento.valorTaxa) || numeroSeguro(pagamento.taxaDescontada));
+        const valorTaxa = valorTaxaSalva > 0 ? valorTaxaSalva : calcularValorTaxaCadastro(valorPago, taxaCadastro);
+        const valorLiquidoSalvo = numeroSeguro(pagamento.valorLiquido);
         const valorLiquido =
-          numeroSeguro(pagamento.valorLiquido) > 0
-            ? arredondar2(numeroSeguro(pagamento.valorLiquido))
+          valorLiquidoSalvo > 0 && valorTaxaSalva > 0
+            ? arredondar2(valorLiquidoSalvo)
             : arredondar2(valorPago - valorTaxa);
 
         return {
           id: String(pagamento.id || `${idRegistro(registro, "venda")}-pag-${index}`),
-          forma: String(pagamento.forma || pagamento.formaPagamento || "Não informado"),
+          forma,
           valorPago,
-          taxaPercentual: numeroSeguro(pagamento.taxaPercentual),
+          taxaPercentual: numeroSeguro(pagamento.taxaPercentual) || valorDaTaxaCadastro(taxaCadastro),
           valorTaxa,
           taxaDescontada: valorTaxa,
           valorLiquido,
@@ -97,15 +188,18 @@ function pagamentosDoRegistro(registro: Registro) {
   }
 
   const bruto = valorBruto(registro);
-  const taxa = arredondar2(numeroSeguro(registro.taxaDescontada) + numeroSeguro(registro.taxaDeliveryDescontada));
-  const liquido = numeroSeguro(registro.valorLiquido) > 0 ? arredondar2(numeroSeguro(registro.valorLiquido)) : arredondar2(bruto - taxa);
+  const forma = formaPagamentoNormalizada(registro.formaPagamento || registro.formaRecebimento || registro.forma || "Não informado");
+  const taxaCadastro = buscarTaxaMaquininhaPorForma(forma, taxasCalculo.maquininhas);
+  const taxaSalva = arredondar2(numeroSeguro(registro.taxaMaquininhaDescontada) || numeroSeguro(registro.taxaDescontada));
+  const taxa = taxaSalva > 0 ? taxaSalva : calcularValorTaxaCadastro(bruto, taxaCadastro);
+  const liquido = numeroSeguro(registro.valorLiquido) > 0 && taxaSalva > 0 ? arredondar2(numeroSeguro(registro.valorLiquido)) : arredondar2(bruto - taxa);
 
   return [
     {
       id: `${idRegistro(registro, "venda")}-pag-0`,
-      forma: String(registro.formaPagamento || registro.formaRecebimento || registro.forma || "Não informado"),
+      forma,
       valorPago: bruto,
-      taxaPercentual: numeroSeguro(registro.taxaPercentual),
+      taxaPercentual: numeroSeguro(registro.taxaPercentual) || valorDaTaxaCadastro(taxaCadastro),
       valorTaxa: taxa,
       taxaDescontada: taxa,
       valorLiquido: liquido,
@@ -127,14 +221,23 @@ function itensDoRegistro(registro: Registro) {
   }));
 }
 
-function totaisDaVenda(registro: Registro) {
-  const pagamentos = pagamentosDoRegistro(registro);
-  const valorTaxas = arredondar2(pagamentos.reduce((total, pagamento) => total + numeroSeguro(pagamento.valorTaxa), 0));
+function totaisDaVenda(registro: Registro, taxasCalculo: TaxasCalculo = { maquininhas: [], delivery: [] }) {
+  const pagamentos = pagamentosDoRegistro(registro, taxasCalculo);
+  const taxaMaquininha = arredondar2(pagamentos.reduce((total, pagamento) => total + numeroSeguro(pagamento.valorTaxa), 0));
   const bruto = valorBruto(registro);
+  const taxaDeliverySalva = numeroSeguro(registro.taxaDeliveryDescontada);
+  const taxaDelivery = taxaDeliverySalva > 0
+    ? arredondar2(taxaDeliverySalva)
+    : registroEhDelivery(registro)
+      ? calcularValorTaxaCadastro(bruto, taxasCalculo.delivery.find((taxa) => taxa.ativo !== false) || null)
+      : 0;
+  const valorTaxas = arredondar2(taxaMaquininha + taxaDelivery);
   const liquidoInformado = numeroSeguro(registro.valorLiquido);
-  const liquido = liquidoInformado > 0 ? arredondar2(liquidoInformado) : arredondar2(bruto - valorTaxas);
+  const liquido = liquidoInformado > 0 && (numeroSeguro(registro.taxaDescontada) > 0 || numeroSeguro(registro.valorTaxas) > 0)
+    ? arredondar2(liquidoInformado)
+    : arredondar2(bruto - valorTaxas);
 
-  return { pagamentos, valorTaxas, bruto, liquido };
+  return { pagamentos, valorTaxas, bruto, liquido, taxaDelivery };
 }
 
 function linhaLancamento(tipo: string, registro: Registro) {
@@ -169,10 +272,11 @@ async function upsertVendas(vendas: Registro[]) {
   if (lista.length === 0) return;
 
   const supabase = getSupabaseAdmin();
+  const taxasCalculo = await buscarTaxasCalculo();
 
   const linhasVendas = lista.map((venda) => {
     const id = idRegistro(venda, "venda");
-    const { pagamentos, valorTaxas, bruto, liquido } = totaisDaVenda(venda);
+    const { pagamentos, valorTaxas, bruto, liquido, taxaDelivery } = totaisDaVenda(venda, taxasCalculo);
 
     return {
       id,
@@ -197,7 +301,7 @@ async function upsertVendas(vendas: Registro[]) {
       colaborador_id: String(venda.colaboradorId || venda.colaborador_id || ""),
       colaborador_nome: String(venda.colaboradorNome || venda.colaborador_nome || ""),
       colaborador_percentual: numeroSeguro(venda.colaboradorPercentual || venda.colaborador_percentual),
-      dados: { ...venda, id, pagamentos },
+      dados: { ...venda, id, pagamentos, taxaDeliveryDescontada: taxaDelivery, taxaDescontada: valorTaxas, valorLiquido: liquido },
       atualizado_em: new Date().toISOString(),
     };
   });
@@ -210,7 +314,7 @@ async function upsertVendas(vendas: Registro[]) {
 
   for (const venda of lista) {
     const vendaId = idRegistro(venda, "venda");
-    const pagamentos = pagamentosDoRegistro(venda).map((pagamento) => ({
+    const pagamentos = pagamentosDoRegistro(venda, taxasCalculo).map((pagamento) => ({
       id: pagamento.id,
       venda_id: vendaId,
       restaurante_id: RESTAURANTE_ID,
@@ -333,11 +437,31 @@ export async function GET() {
     const supabase = getSupabaseAdmin();
 
     const [vendasResp, pagamentosResp, itensResp, lancamentosResp, colaboradoresResp] = await Promise.all([
-      supabase.from("financeiro_vendas").select("*").eq("restaurante_id", RESTAURANTE_ID).order("data_hora", { ascending: false }),
-      supabase.from("financeiro_venda_pagamentos").select("*").eq("restaurante_id", RESTAURANTE_ID),
-      supabase.from("financeiro_venda_itens").select("*").eq("restaurante_id", RESTAURANTE_ID),
-      supabase.from("financeiro_lancamentos").select("*").eq("restaurante_id", RESTAURANTE_ID).order("data_hora", { ascending: false }),
-      supabase.from("financeiro_colaboradores").select("*").eq("restaurante_id", RESTAURANTE_ID).order("nome", { ascending: true }),
+      supabase
+        .from("financeiro_vendas")
+        .select(
+          "id,caixa_id,atendimento_tipo,tipo_venda,status,data,data_hora,operador,consumidor,forma_pagamento,total_itens,valor_original,subtotal_itens,desconto_valor,valor_bruto,valor_cobrado,valor_taxas,valor_liquido,colaborador_id,colaborador_nome,colaborador_percentual,dados"
+        )
+        .eq("restaurante_id", RESTAURANTE_ID)
+        .order("data_hora", { ascending: false }),
+      supabase
+        .from("financeiro_venda_pagamentos")
+        .select("id,venda_id,forma,valor_pago,taxa_percentual,valor_taxa,valor_liquido,dados")
+        .eq("restaurante_id", RESTAURANTE_ID),
+      supabase
+        .from("financeiro_venda_itens")
+        .select("id,venda_id,produto_id,nome,quantidade,preco_unitario,total,dados")
+        .eq("restaurante_id", RESTAURANTE_ID),
+      supabase
+        .from("financeiro_lancamentos")
+        .select("id,tipo,data,data_hora,valor,dados")
+        .eq("restaurante_id", RESTAURANTE_ID)
+        .order("data_hora", { ascending: false }),
+      supabase
+        .from("financeiro_colaboradores")
+        .select("id,nome,percentual_comissao,telefone,observacoes,ativo,dados")
+        .eq("restaurante_id", RESTAURANTE_ID)
+        .order("nome", { ascending: true }),
     ]);
 
     const erro = vendasResp.error || pagamentosResp.error || itensResp.error || lancamentosResp.error || colaboradoresResp.error;
@@ -376,6 +500,7 @@ export async function GET() {
       saidas: porTipo("saida"),
       contasReceber: porTipo("conta_receber"),
       folhaPagamento: porTipo("folha"),
+      investimentos: porTipo("investimento"),
       colaboradores: (colaboradoresResp.data || []).map((colaborador: Registro) => ({
         ...(colaborador.dados || {}),
         id: colaborador.id,
@@ -412,12 +537,23 @@ export async function POST(request: Request) {
       ...(body.venda ? [body.venda] : []),
     ];
 
-    const saidas = Array.isArray(body.saidas) ? body.saidas : [];
+    const saidas = [
+      ...(Array.isArray(body.saidas) ? body.saidas : []),
+      ...(body.saida ? [body.saida] : []),
+    ];
     const contasReceber = [
       ...(Array.isArray(body.contasReceber) ? body.contasReceber : []),
       ...(body.contaReceber ? [body.contaReceber] : []),
     ];
-    const folha = Array.isArray(body.folhaPagamento) ? body.folhaPagamento : Array.isArray(body.folha) ? body.folha : [];
+    const folha = [
+      ...(Array.isArray(body.folhaPagamento) ? body.folhaPagamento : Array.isArray(body.folha) ? body.folha : []),
+      ...(body.folhaItem ? [body.folhaItem] : []),
+      ...(body.folha && !Array.isArray(body.folha) ? [body.folha] : []),
+    ];
+    const investimentos = [
+      ...(Array.isArray(body.investimentos) ? body.investimentos : []),
+      ...(body.investimento ? [body.investimento] : []),
+    ];
     const colaboradores = Array.isArray(body.colaboradores) ? body.colaboradores : [];
 
     await Promise.all([
@@ -425,18 +561,54 @@ export async function POST(request: Request) {
       upsertLancamentos("saida", saidas),
       upsertLancamentos("conta_receber", contasReceber),
       upsertLancamentos("folha", folha),
+      upsertLancamentos("investimento", investimentos),
       upsertVendas(vendas),
       upsertColaboradores(colaboradores),
     ]);
 
     return NextResponse.json({
       ok: true,
-      total: entradas.length + vendas.length + saidas.length + contasReceber.length + folha.length + colaboradores.length,
+      total: entradas.length + vendas.length + saidas.length + contasReceber.length + folha.length + investimentos.length + colaboradores.length,
     });
   } catch (error: any) {
     return NextResponse.json(
       {
         erro: "Erro interno ao salvar financeiro no Supabase.",
+        detalhe: error?.message || "Erro desconhecido.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+
+export async function DELETE(request: Request) {
+  try {
+    const body = await request.json();
+    const id = String(body?.id || "");
+    const tipo = String(body?.tipo || "");
+
+    if (!id || !tipo) {
+      return NextResponse.json({ erro: "Informe id e tipo do lançamento." }, { status: 400 });
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("financeiro_lancamentos")
+      .delete()
+      .eq("id", id)
+      .eq("tipo", tipo)
+      .eq("restaurante_id", RESTAURANTE_ID);
+
+    if (error) {
+      return NextResponse.json({ erro: "Erro ao remover lançamento.", detalhe: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    return NextResponse.json(
+      {
+        erro: "Erro interno ao remover lançamento.",
         detalhe: error?.message || "Erro desconhecido.",
       },
       { status: 500 }

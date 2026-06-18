@@ -11,7 +11,20 @@ type Registro = Record<string, any>;
 type CategoriaTaxa = "maquininha" | "delivery" | "entrega";
 
 function numeroSeguro(valor: any): number {
-  const numero = Number(String(valor ?? 0).replace(",", "."));
+  if (typeof valor === "number") return Number.isFinite(valor) ? valor : 0;
+
+  let texto = String(valor ?? 0)
+    .replace("R$", "")
+    .replace(/\s/g, "")
+    .replace(/[^\d,.-]/g, "");
+
+  if (texto.includes(",") && texto.includes(".")) {
+    texto = texto.replace(/\./g, "").replace(",", ".");
+  } else if (texto.includes(",")) {
+    texto = texto.replace(",", ".");
+  }
+
+  const numero = Number(texto);
   return Number.isFinite(numero) ? numero : 0;
 }
 
@@ -28,10 +41,10 @@ function normalizarTaxa(taxa: Registro, categoriaPadrao: CategoriaTaxa) {
     restaurante_id: RESTAURANTE_ID,
     categoria,
     nome: String(taxa.nome || taxa.descricao || categoria).trim(),
-    tipo: String(taxa.tipo || "Percentual"),
+    tipo: String(taxa.tipo || (categoria === "entrega" ? "Valor fixo" : "Percentual")),
     valor: numeroSeguro(taxa.valor || taxa.percentual || taxa.taxa || taxa.porcentagem),
     ativo: taxa.ativo !== false,
-    dados: { ...taxa, id, categoria },
+    dados: { ...taxa, id, categoria, tipoCadastro: categoria },
     atualizado_em: new Date().toISOString(),
   };
 }
@@ -85,7 +98,7 @@ export async function POST(request: Request) {
 
     const maquininhas = Array.isArray(body.maquininhas) ? body.maquininhas.map((taxa: Registro) => normalizarTaxa(taxa, "maquininha")) : [];
     const delivery = Array.isArray(body.delivery) ? body.delivery.map((taxa: Registro) => normalizarTaxa(taxa, "delivery")) : [];
-    const entrega = body.entrega ? [normalizarTaxa({ ...body.entrega, id: body.entrega.id || "taxa-entrega-padrao", nome: body.entrega.nome || "Taxa de entrega" }, "entrega")] : [];
+    const entrega = body.entrega ? [normalizarTaxa({ ...body.entrega, id: body.entrega.id || "taxa-entrega-padrao", nome: body.entrega.nome || "Taxa de entrega", tipo: "Valor fixo" }, "entrega")] : [];
     const avulsas = Array.isArray(body.taxas) ? body.taxas.map((taxa: Registro) => normalizarTaxa(taxa, taxa.categoria || "maquininha")) : [];
 
     const linhas = [...maquininhas, ...delivery, ...entrega, ...avulsas];

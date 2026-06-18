@@ -1,6 +1,16 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  LS_SAIDAS,
+  buscarFinanceiroSupabase,
+  deduplicarPorId,
+  lerArrayLocalStorage,
+  removerLancamentoFinanceiroSupabase,
+  salvarArrayLocalStorage,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
 type StatusSaida = "Pago" | "Pendente" | "Vencido";
 
@@ -14,7 +24,7 @@ type Saida = {
   status: StatusSaida;
 };
 
-const STORAGE_KEY = "gestor-restaurante-saidas";
+const STORAGE_KEY = LS_SAIDAS;
 
 const categoriasSaida = [
   "Fornecedores",
@@ -72,92 +82,6 @@ function formatarData(data: string) {
   return `${dia}/${mes}/${ano}`;
 }
 
-function MenuLateral() {
-  return (
-    <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
-  );
-}
 
 export default function SaidasPage() {
   const [saidas, setSaidas] = useState<Saida[]>([]);
@@ -171,21 +95,38 @@ export default function SaidasPage() {
   const [status, setStatus] = useState<StatusSaida>("Pago");
 
   useEffect(() => {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    let ativo = true;
 
-    if (dadosSalvos) {
+    async function carregarSaidas() {
+      const saidasLocais = lerArrayLocalStorage<Saida>(STORAGE_KEY);
+
+      if (ativo) {
+        setSaidas(saidasLocais);
+      }
+
       try {
-        const dadosConvertidos = JSON.parse(dadosSalvos) as Saida[];
+        const dados = await buscarFinanceiroSupabase();
+        const saidasSupabase = (dados.saidas || []) as Saida[];
+        const listaFinal = saidasSupabase.length > 0
+          ? (deduplicarPorId(saidasSupabase) as Saida[])
+          : saidasLocais;
 
-        if (Array.isArray(dadosConvertidos)) {
-          setSaidas(dadosConvertidos);
-        }
-      } catch {
-        setSaidas([]);
+        if (!ativo) return;
+
+        setSaidas(listaFinal);
+        salvarArrayLocalStorage(STORAGE_KEY, listaFinal);
+      } catch (erro) {
+        console.warn("Não foi possível carregar saídas do Supabase.", erro);
+      } finally {
+        if (ativo) setDadosCarregados(true);
       }
     }
 
-    setDadosCarregados(true);
+    carregarSaidas();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -204,8 +145,8 @@ export default function SaidasPage() {
     const hoje = gerarDataHoje();
     const mesAtual = hoje.slice(0, 7);
 
-    const saidasDoMes = saidas.filter((saida) =>
-      saida.data.startsWith(mesAtual)
+    const saidasDoMes = saidas.filter(
+      (saida) => saida.data.startsWith(mesAtual) && saida.status === "Pago"
     );
 
     const totalGeral = saidas.reduce((soma, saida) => soma + saida.valor, 0);
@@ -255,7 +196,7 @@ export default function SaidasPage() {
     return totais;
   }, [saidas]);
 
-  function cadastrarSaida(event: FormEvent<HTMLFormElement>) {
+  async function cadastrarSaida(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorNumerico = Number(valor.replace(",", "."));
@@ -275,6 +216,7 @@ export default function SaidasPage() {
       return;
     }
 
+    const agora = new Date().toISOString();
     const novaSaida: Saida = {
       id:
         typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -286,9 +228,17 @@ export default function SaidasPage() {
       formaPagamento,
       valor: valorNumerico,
       status,
-    };
+      ...(status === "Pago" ? { dataPagamento: data, pagoEm: agora } : {}),
+    } as Saida;
 
     setSaidas((listaAtual) => [novaSaida, ...listaAtual]);
+
+    try {
+      await salvarFinanceiroSupabase({ saida: novaSaida });
+    } catch (erro) {
+      console.warn("Saída salva localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Salvei no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
 
     setData(gerarDataHoje());
     setCategoria(categoriasSaida[0]);
@@ -298,18 +248,51 @@ export default function SaidasPage() {
     setStatus("Pago");
   }
 
-  function excluirSaida(id: string) {
+  async function excluirSaida(id: string) {
     const confirmar = window.confirm("Deseja excluir esta saída?");
 
     if (!confirmar) return;
 
     setSaidas((listaAtual) => listaAtual.filter((saida) => saida.id !== id));
+
+    try {
+      await removerLancamentoFinanceiroSupabase("saida", id);
+    } catch (erro) {
+      console.warn("Saída excluída localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Excluí do navegador, mas não consegui excluir do Supabase agora.");
+    }
+  }
+
+  async function marcarComoPago(id: string) {
+    const saidaOriginal = saidas.find((saida) => saida.id === id);
+
+    if (!saidaOriginal) return;
+
+    const confirmar = window.confirm("Deseja marcar esta saída como paga e atualizar o saldo real?");
+
+    if (!confirmar) return;
+
+    const atualizada = {
+      ...saidaOriginal,
+      status: "Pago" as StatusSaida,
+      dataPagamento: gerarDataHoje(),
+      pagoEm: new Date().toISOString(),
+    };
+
+    setSaidas((listaAtual) => listaAtual.map((saida) => (saida.id === id ? atualizada : saida)));
+
+    try {
+      await salvarFinanceiroSupabase({ saida: atualizada });
+    } catch (erro) {
+      console.warn("Pagamento salvo localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Marquei como pago no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <div className="flex min-h-screen">
-        <MenuLateral />
+        <AdminSidebar active="saidas" />
 
         <section className="flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mb-8 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
@@ -601,13 +584,25 @@ export default function SaidasPage() {
                         </td>
 
                         <td className="px-4 py-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => excluirSaida(saida.id)}
-                            className="rounded-lg bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100"
-                          >
-                            Excluir
-                          </button>
+                          <div className="flex justify-end gap-2">
+                            {saida.status !== "Pago" && (
+                              <button
+                                type="button"
+                                onClick={() => marcarComoPago(saida.id)}
+                                className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100"
+                              >
+                                Marcar pago
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => excluirSaida(saida.id)}
+                              className="rounded-lg bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100"
+                            >
+                              Excluir
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

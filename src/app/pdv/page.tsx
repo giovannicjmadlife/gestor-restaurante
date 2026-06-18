@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { buscarProdutos, salvarProdutos } from "@/lib/produtosStorage";
 import { salvarVendaFinanceiroSupabase } from "@/lib/financeiroSupabase";
 
@@ -15,6 +15,12 @@ type ProdutoView = {
   subgrupo: string;
   opcao: string;
   tipo: string;
+  categoriaPdv: string;
+  categoriaNormalizada: string;
+  grupoNormalizado: string;
+  subgrupoNormalizado: string;
+  opcaoNormalizada: string;
+  textoBusca: string;
   preco: number;
   ativo: boolean;
   porQuilo: boolean;
@@ -94,7 +100,7 @@ type CaixaAtual = {
 };
 
 type AtendimentoAtual = {
-  tipo: "Balcão" | "Mesa" | "Comanda";
+  tipo: "Balcão" | "Mesa" | "Comanda" | "Delivery";
   mesaId?: string;
   mesaNumero?: number;
   comandaId?: string;
@@ -135,6 +141,8 @@ const LS_PRODUTOS = "gestor-restaurante-produtos";
 const LS_ENTRADAS = "gestor-restaurante-entradas";
 const LS_VENDAS_DETALHADAS = "gestor-restaurante-vendas-detalhadas";
 const LS_TAXAS_MAQUININHAS = "gestor-restaurante-taxas-maquininhas";
+const LS_TAXAS_DELIVERY = "gestor-restaurante-taxas-delivery";
+const LS_TAXA_ENTREGA = "gestor-restaurante-taxa-entrega";
 const LS_CONTAS_RECEBER = "gestor-restaurante-contas-receber";
 const LS_CORRENTISTAS = "gestor-restaurante-correntistas";
 const LS_COLABORADORES = "gestor-restaurante-colaboradores";
@@ -254,6 +262,34 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function calcularCategoriaPdv(categoriaNormalizada: string, grupoNormalizado: string) {
+  if (categoriaNormalizada.includes("almoco") || grupoNormalizado.includes("almoco")) {
+    return "Almoço";
+  }
+
+  if (
+    categoriaNormalizada.includes("janta") ||
+    categoriaNormalizada.includes("pizza") ||
+    grupoNormalizado.includes("pizza")
+  ) {
+    return "Janta";
+  }
+
+  if (categoriaNormalizada.includes("bebida") || grupoNormalizado.includes("bebida")) {
+    return "Bebidas";
+  }
+
+  if (
+    categoriaNormalizada.includes("sorvete") ||
+    grupoNormalizado.includes("sorvete") ||
+    grupoNormalizado.includes("acai")
+  ) {
+    return "Sorvete";
+  }
+
+  return "Outros";
+}
+
 function normalizarSubgrupoPizza(subgrupo: string, nome = "") {
   const texto = normalizeText(`${subgrupo} ${nome}`);
 
@@ -356,6 +392,15 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
   }
 
   const tipo = [grupo, subgrupo, opcao].filter(Boolean).join(" > ");
+  const categoriaNormalizada = normalizeText(categoria);
+  const grupoNormalizado = normalizeText(grupo);
+  const subgrupoNormalizado = normalizeText(subgrupo);
+  const opcaoNormalizada = normalizeText(opcao);
+  const tipoNormalizado = normalizeText(tipo);
+  const categoriaPdv = calcularCategoriaPdv(categoriaNormalizada, grupoNormalizado);
+  const textoBusca = normalizeText(
+    `${nome} ${codigo} ${categoria} ${grupo} ${subgrupo} ${opcao} ${tipo}`
+  );
 
   const preco =
     asNumber(raw.valor) ||
@@ -375,7 +420,6 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
 
   const tipoPreco = normalizeText(asString(raw.tipoPreco));
   const unidade = normalizeText(asString(raw.unidade));
-  const tipoNormalizado = normalizeText(tipo);
 
   const porQuilo =
     raw.porQuilo === true ||
@@ -400,6 +444,12 @@ function getProdutoView(raw: ProdutoRaw, index: number): ProdutoView {
     subgrupo,
     opcao,
     tipo,
+    categoriaPdv,
+    categoriaNormalizada,
+    grupoNormalizado,
+    subgrupoNormalizado,
+    opcaoNormalizada,
+    textoBusca,
     preco,
     ativo,
     porQuilo,
@@ -413,12 +463,12 @@ function calcularTotalItem(item: CartItem) {
   return Number((item.precoUnitario * item.quantidade).toFixed(2));
 }
 
-function getTaxaMaquininha(
+function getTaxaMaquininhaCadastro(
   formaPagamento: FormaPagamentoBase,
   taxas: ProdutoRaw[]
 ) {
   if (formaPagamento === "Dinheiro" || formaPagamento === "Correntista") {
-    return 0;
+    return null;
   }
 
   const alvo =
@@ -428,28 +478,33 @@ function getTaxaMaquininha(
       ? ["debito", "débito"]
       : ["pix"];
 
-  for (const taxa of taxas) {
-    const ativo = taxa.ativo;
-    const texto = normalizeText(Object.values(taxa).join(" "));
+  return (
+    taxas.find((taxa) => {
+      if (taxa.ativo === false) return false;
+      const texto = normalizeText(Object.values(taxa).join(" "));
+      return alvo.some((palavra) => texto.includes(palavra));
+    }) || null
+  );
+}
 
-    if (ativo === false) {
-      continue;
-    }
+function percentualDaTaxa(taxa: ProdutoRaw | null) {
+  if (!taxa) return 0;
+  const tipo = normalizeText(asString(taxa.tipo || taxa.tipoTaxa || "Percentual"));
+  if (tipo.includes("fixo") || tipo.includes("valor")) return 0;
+  return (
+    asNumber(taxa.percentual) ||
+    asNumber(taxa.taxa) ||
+    asNumber(taxa.valor) ||
+    asNumber(taxa.porcentagem) ||
+    0
+  );
+}
 
-    const encontrouForma = alvo.some((palavra) => texto.includes(palavra));
-
-    if (encontrouForma) {
-      return (
-        asNumber(taxa.percentual) ||
-        asNumber(taxa.taxa) ||
-        asNumber(taxa.valor) ||
-        asNumber(taxa.porcentagem) ||
-        0
-      );
-    }
-  }
-
-  return 0;
+function getTaxaMaquininha(
+  formaPagamento: FormaPagamentoBase,
+  taxas: ProdutoRaw[]
+) {
+  return percentualDaTaxa(getTaxaMaquininhaCadastro(formaPagamento, taxas));
 }
 
 function calcularPagamentoVenda(
@@ -457,8 +512,9 @@ function calcularPagamentoVenda(
   valorPago: number,
   taxas: ProdutoRaw[]
 ): PagamentoVenda {
-  const taxaPercentual = getTaxaMaquininha(forma, taxas);
-  const valorTaxa = Number(((valorPago * taxaPercentual) / 100).toFixed(2));
+  const taxaCadastro = getTaxaMaquininhaCadastro(forma, taxas);
+  const taxaPercentual = percentualDaTaxa(taxaCadastro);
+  const valorTaxa = calcularValorTaxaCadastro(valorPago, taxaCadastro);
   const valorLiquido = Number((valorPago - valorTaxa).toFixed(2));
 
   return {
@@ -471,6 +527,30 @@ function calcularPagamentoVenda(
     valorLiquido,
   };
 }
+
+function getTaxaAtiva(taxas: ProdutoRaw[]) {
+  return taxas.find((taxa) => taxa.ativo !== false) || null;
+}
+
+function calcularValorTaxaCadastro(valorBase: number, taxa: ProdutoRaw | null) {
+  if (!taxa) return 0;
+
+  const tipo = normalizeText(asString(taxa.tipo || taxa.tipoTaxa || "Percentual"));
+  const valor =
+    asNumber(taxa.valor) ||
+    asNumber(taxa.percentual) ||
+    asNumber(taxa.taxa) ||
+    asNumber(taxa.porcentagem);
+
+  if (valor <= 0) return 0;
+
+  if (tipo.includes("fixo") || tipo.includes("valor")) {
+    return Number(valor.toFixed(2));
+  }
+
+  return Number(((valorBase * valor) / 100).toFixed(2));
+}
+
 
 function descricaoPagamentos(pagamentos: PagamentoVenda[]) {
   if (pagamentos.length <= 1) {
@@ -485,6 +565,8 @@ function descricaoPagamentos(pagamentos: PagamentoVenda[]) {
 export default function PdvPage() {
   const [produtos, setProdutos] = useState<ProdutoView[]>([]);
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<ProdutoRaw[]>([]);
+  const [taxasDelivery, setTaxasDelivery] = useState<ProdutoRaw[]>([]);
+  const [taxaEntrega, setTaxaEntrega] = useState<ProdutoRaw>({ valor: 0, ativo: false });
   const [correntistas, setCorrentistas] = useState<Correntista[]>([]);
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
 
@@ -562,12 +644,37 @@ export default function PdvPage() {
 
     setTaxasMaquininhas(taxasStorage);
 
+    const taxasDeliveryStorage = safeJsonArray<ProdutoRaw>(
+      localStorage.getItem(LS_TAXAS_DELIVERY)
+    );
+    setTaxasDelivery(taxasDeliveryStorage);
+
+    const taxaEntregaStorage = safeJsonObject<ProdutoRaw>(
+      localStorage.getItem(LS_TAXA_ENTREGA)
+    );
+    if (taxaEntregaStorage) {
+      setTaxaEntrega(taxaEntregaStorage);
+    }
+
     fetch("/api/taxas", { cache: "no-store" })
       .then((resposta) => (resposta.ok ? resposta.json() : null))
       .then((dados) => {
-        if (!dados?.maquininhas || cancelado) return;
-        setTaxasMaquininhas(dados.maquininhas);
-        localStorage.setItem(LS_TAXAS_MAQUININHAS, JSON.stringify(dados.maquininhas));
+        if (!dados || cancelado) return;
+
+        if (Array.isArray(dados.maquininhas)) {
+          setTaxasMaquininhas(dados.maquininhas);
+          localStorage.setItem(LS_TAXAS_MAQUININHAS, JSON.stringify(dados.maquininhas));
+        }
+
+        if (Array.isArray(dados.delivery)) {
+          setTaxasDelivery(dados.delivery);
+          localStorage.setItem(LS_TAXAS_DELIVERY, JSON.stringify(dados.delivery));
+        }
+
+        if (dados.entrega) {
+          setTaxaEntrega(dados.entrega);
+          localStorage.setItem(LS_TAXA_ENTREGA, JSON.stringify(dados.entrega));
+        }
       })
       .catch((error) => {
         console.error("Não foi possível carregar taxas do Supabase.", error);
@@ -659,43 +766,18 @@ export default function PdvPage() {
   }, []);
 
   const caixaAberto = caixaAtual?.status === "Aberto";
+  const buscaDiferida = useDeferredValue(busca);
+  const grupoSelecionadoNormalizado = useMemo(() => normalizeText(grupoSelecionado), [grupoSelecionado]);
+  const subgrupoSelecionadoNormalizado = useMemo(() => normalizeText(subgrupoSelecionado), [subgrupoSelecionado]);
+  const opcaoSelecionadaNormalizado = useMemo(() => normalizeText(opcaoSelecionada), [opcaoSelecionada]);
+  const buscaNormalizada = useMemo(() => normalizeText(buscaDiferida), [buscaDiferida]);
 
   function categoriaPdvDoProduto(produto: ProdutoView) {
-    const categoriaProduto = normalizeText(produto.categoria);
-    const grupoProduto = normalizeText(produto.grupo);
-
-    if (categoriaProduto.includes("almoco") || grupoProduto.includes("almoco")) {
-      return "Almoço";
-    }
-
-    if (
-      categoriaProduto.includes("janta") ||
-      categoriaProduto.includes("pizza") ||
-      grupoProduto.includes("pizza")
-    ) {
-      return "Janta";
-    }
-
-    if (categoriaProduto.includes("bebida") || grupoProduto.includes("bebida")) {
-      return "Bebidas";
-    }
-
-    if (
-      categoriaProduto.includes("sorvete") ||
-      grupoProduto.includes("sorvete") ||
-      grupoProduto.includes("acai")
-    ) {
-      return "Sorvete";
-    }
-
-    return "Outros";
+    return produto.categoriaPdv;
   }
 
   function produtoEhPizza(produto: ProdutoView) {
-    const categoriaProduto = normalizeText(produto.categoria);
-    const grupoProduto = normalizeText(produto.grupo);
-
-    return categoriaProduto.includes("pizza") || grupoProduto.includes("pizza");
+    return produto.categoriaNormalizada.includes("pizza") || produto.grupoNormalizado.includes("pizza");
   }
 
   function limparSelecaoMeiaPizza() {
@@ -741,9 +823,9 @@ export default function PdvPage() {
     }
 
     return produtosDoCardPrincipal.filter(
-      (produto) => normalizeText(produto.grupo) === normalizeText(grupoSelecionado)
+      (produto) => produto.grupoNormalizado === grupoSelecionadoNormalizado
     );
-  }, [produtosDoCardPrincipal, grupoSelecionado]);
+  }, [produtosDoCardPrincipal, grupoSelecionado, grupoSelecionadoNormalizado]);
 
   const subgruposDisponiveis = useMemo(() => {
     const lista = produtosDoGrupoSelecionado
@@ -752,12 +834,12 @@ export default function PdvPage() {
 
     const unicos = Array.from(new Set(lista));
 
-    if (normalizeText(grupoSelecionado) === "pizza") {
+    if (grupoSelecionadoNormalizado === "pizza") {
       return ordenarPorOrdemPreferencial(unicos, ORDEM_SUBGRUPOS_PIZZA);
     }
 
     return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [produtosDoGrupoSelecionado, grupoSelecionado]);
+  }, [produtosDoGrupoSelecionado, grupoSelecionadoNormalizado]);
 
   const produtosDoSubgrupoSelecionado = useMemo(() => {
     if (!subgrupoSelecionado) {
@@ -766,9 +848,9 @@ export default function PdvPage() {
 
     return produtosDoGrupoSelecionado.filter(
       (produto) =>
-        normalizeText(produto.subgrupo) === normalizeText(subgrupoSelecionado)
+        produto.subgrupoNormalizado === subgrupoSelecionadoNormalizado
     );
-  }, [produtosDoGrupoSelecionado, subgrupoSelecionado]);
+  }, [produtosDoGrupoSelecionado, subgrupoSelecionado, subgrupoSelecionadoNormalizado]);
 
   const opcoesDisponiveis = useMemo(() => {
     const lista = produtosDoSubgrupoSelecionado
@@ -777,12 +859,12 @@ export default function PdvPage() {
 
     const unicos = Array.from(new Set(lista));
 
-    if (normalizeText(grupoSelecionado) === "pizza") {
+    if (grupoSelecionadoNormalizado === "pizza") {
       return ordenarPorOrdemPreferencial(unicos, ORDEM_TAMANHOS_PIZZA);
     }
 
     return unicos.sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [produtosDoSubgrupoSelecionado, grupoSelecionado]);
+  }, [produtosDoSubgrupoSelecionado, grupoSelecionadoNormalizado]);
 
   useEffect(() => {
     setGrupoSelecionado("");
@@ -807,7 +889,6 @@ export default function PdvPage() {
   }, [opcaoSelecionada]);
 
   const produtosFiltrados = useMemo(() => {
-    const buscaNormalizada = normalizeText(busca);
     const buscando = Boolean(buscaNormalizada);
 
     return produtosDoCardPrincipal.filter((produto) => {
@@ -817,7 +898,7 @@ export default function PdvPage() {
 
       if (
         grupoSelecionado &&
-        normalizeText(produto.grupo) !== normalizeText(grupoSelecionado)
+        produto.grupoNormalizado !== grupoSelecionadoNormalizado
       ) {
         return false;
       }
@@ -828,7 +909,7 @@ export default function PdvPage() {
 
       if (
         subgrupoSelecionado &&
-        normalizeText(produto.subgrupo) !== normalizeText(subgrupoSelecionado)
+        produto.subgrupoNormalizado !== subgrupoSelecionadoNormalizado
       ) {
         return false;
       }
@@ -839,26 +920,25 @@ export default function PdvPage() {
 
       if (
         opcaoSelecionada &&
-        normalizeText(produto.opcao) !== normalizeText(opcaoSelecionada)
+        produto.opcaoNormalizada !== opcaoSelecionadaNormalizado
       ) {
         return false;
       }
 
-      const textoProduto = normalizeText(
-        `${produto.nome} ${produto.codigo} ${produto.categoria} ${produto.grupo} ${produto.subgrupo} ${produto.opcao} ${produto.tipo}`
-      );
-
-      return !buscaNormalizada || textoProduto.includes(buscaNormalizada);
+      return !buscaNormalizada || produto.textoBusca.includes(buscaNormalizada);
     });
   }, [
     produtosDoCardPrincipal,
     gruposDisponiveis,
     grupoSelecionado,
+    grupoSelecionadoNormalizado,
     subgruposDisponiveis,
     subgrupoSelecionado,
+    subgrupoSelecionadoNormalizado,
     opcoesDisponiveis,
     opcaoSelecionada,
-    busca,
+    opcaoSelecionadaNormalizado,
+    buscaNormalizada,
   ]);
 
   const totalItens = useMemo(() => {
@@ -880,9 +960,16 @@ export default function PdvPage() {
     return Math.min(desconto, totalBruto);
   }, [descontoReais, totalBruto]);
 
+  const tipoAtendimento = atendimentoAtual?.tipo || "Balcão";
+
+  const taxaEntregaValor = useMemo(() => {
+    if (tipoAtendimento !== "Delivery" || taxaEntrega?.ativo === false) return 0;
+    return asNumber(taxaEntrega?.valor);
+  }, [tipoAtendimento, taxaEntrega]);
+
   const valorCobrar = useMemo(() => {
-    return Number(Math.max(totalBruto - descontoNumerico, 0).toFixed(2));
-  }, [totalBruto, descontoNumerico]);
+    return Number(Math.max(totalBruto - descontoNumerico + taxaEntregaValor, 0).toFixed(2));
+  }, [totalBruto, descontoNumerico, taxaEntregaValor]);
 
   const pagamentosCalculados = useMemo(() => {
     if (formaPagamento === "Dividido") {
@@ -911,13 +998,27 @@ export default function PdvPage() {
     return Number((valorCobrar - totalPagamentosDivididos).toFixed(2));
   }, [valorCobrar, totalPagamentosDivididos]);
 
-  const valorTaxa = useMemo(() => {
+  const valorTaxaPagamentos = useMemo(() => {
     return Number(
       pagamentosCalculados
         .reduce((total, pagamento) => total + pagamento.valorTaxa, 0)
         .toFixed(2)
     );
   }, [pagamentosCalculados]);
+
+  const taxaDeliveryAtiva = useMemo(() => {
+    if (tipoAtendimento !== "Delivery") return null;
+    return getTaxaAtiva(taxasDelivery);
+  }, [tipoAtendimento, taxasDelivery]);
+
+  const valorTaxaDelivery = useMemo(() => {
+    if (tipoAtendimento !== "Delivery") return 0;
+    return calcularValorTaxaCadastro(valorCobrar, taxaDeliveryAtiva);
+  }, [tipoAtendimento, valorCobrar, taxaDeliveryAtiva]);
+
+  const valorTaxa = useMemo(() => {
+    return Number((valorTaxaPagamentos + valorTaxaDelivery).toFixed(2));
+  }, [valorTaxaPagamentos, valorTaxaDelivery]);
 
   const valorLiquido = useMemo(() => {
     return Number((valorCobrar - valorTaxa).toFixed(2));
@@ -944,8 +1045,6 @@ export default function PdvPage() {
     );
   }, [colaboradores, colaboradorSelecionadoId]);
 
-  const tipoAtendimento = atendimentoAtual?.tipo || "Balcão";
-
   const consumidorVenda =
     atendimentoAtual?.tipo === "Mesa"
       ? `Mesa ${atendimentoAtual.mesaNumero} - ${
@@ -955,6 +1054,8 @@ export default function PdvPage() {
       ? `Comanda ${atendimentoAtual.comandaNome || ""} - ${
           cliente || atendimentoAtual.cliente || "Não identificado"
         }`
+      : atendimentoAtual?.tipo === "Delivery"
+      ? `Delivery - ${cliente || atendimentoAtual.cliente || "Não identificado"}`
       : formaPagamento === "Correntista" && correntistaSelecionado
       ? correntistaSelecionado.nome
       : cliente || "Não identificado";
@@ -1257,13 +1358,29 @@ export default function PdvPage() {
   }
 
   function removerVinculoAtendimento() {
-    const confirmar = confirm("Deseja remover o vínculo com esta mesa?");
+    const confirmar = confirm("Deseja remover o vínculo deste atendimento?");
 
     if (!confirmar) return;
 
     localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
     setAtendimentoAtual(null);
     setCliente("");
+  }
+
+  function voltarParaBalcao() {
+    localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
+    setAtendimentoAtual(null);
+  }
+
+  function iniciarDelivery() {
+    const atendimento: AtendimentoAtual = {
+      tipo: "Delivery",
+      cliente: cliente || "",
+      iniciadoEm: new Date().toISOString(),
+    };
+
+    setAtendimentoAtual(atendimento);
+    localStorage.setItem(LS_ATENDIMENTO_ATUAL, JSON.stringify(atendimento));
   }
 
   function abrirPagamento() {
@@ -1334,7 +1451,7 @@ export default function PdvPage() {
   }
 
   function lancarNaMesa() {
-    if (!atendimentoAtual || atendimentoAtual.tipo === "Balcão") {
+    if (!atendimentoAtual || !["Mesa", "Comanda"].includes(atendimentoAtual.tipo)) {
       alert("Este atendimento não está vinculado a mesa ou comanda.");
       return;
     }
@@ -1610,12 +1727,16 @@ Falta/sobra: ${money(
           ? "Venda Mesa"
           : tipoAtendimento === "Comanda"
           ? "Venda Comanda"
+          : tipoAtendimento === "Delivery"
+          ? "Venda Delivery"
           : "Venda PDV",
       descricao:
         tipoAtendimento === "Mesa"
           ? `Venda Mesa ${atendimentoAtual?.mesaNumero} - ${descricaoItens}`
           : tipoAtendimento === "Comanda"
           ? `Venda Comanda ${atendimentoAtual?.comandaNome || ""} - ${descricaoItens}`
+          : tipoAtendimento === "Delivery"
+          ? `Venda Delivery - ${descricaoItens}`
           : `Venda PDV - ${descricaoItens}`,
       formaRecebimento: formaRecebimentoFinal,
       formaPagamento: formaRecebimentoFinal,
@@ -1628,6 +1749,10 @@ Falta/sobra: ${money(
       valorBruto: valorCobrar,
       valorCobrado: valorCobrar,
       taxaPercentual,
+      taxaMaquininhaDescontada: valorTaxaPagamentos,
+      taxaDeliveryDescontada: valorTaxaDelivery,
+      taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
+      taxaEntregaValor,
       taxaDescontada: valorTaxa,
       valorLiquido,
       valor: valorLiquido,
@@ -1672,6 +1797,10 @@ Falta/sobra: ${money(
       valorBruto: valorCobrar,
       valorCobrado: valorCobrar,
       taxaPercentual,
+      taxaMaquininhaDescontada: valorTaxaPagamentos,
+      taxaDeliveryDescontada: valorTaxaDelivery,
+      taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
+      taxaEntregaValor,
       taxaDescontada: valorTaxa,
       valorLiquido,
       valor: valorLiquido,
@@ -2151,13 +2280,18 @@ Falta/sobra: ${money(
           </div>
 
           <nav className="mt-3 space-y-1 px-2">
-            <a
-              href="/pdv"
-              className="flex w-full items-center gap-2 rounded-md bg-[#f97316] px-3 py-3 text-left text-sm font-bold text-white"
+            <button
+              type="button"
+              onClick={voltarParaBalcao}
+              className={`flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm font-bold ${
+                tipoAtendimento === "Balcão"
+                  ? "bg-[#f97316] text-white"
+                  : "text-white hover:bg-[#232323]"
+              }`}
             >
               <span className="text-lg">🧾</span>
               Balcão
-            </a>
+            </button>
 
             <a
               href="/pdv/comanda"
@@ -2175,7 +2309,15 @@ Falta/sobra: ${money(
               Mesa
             </a>
 
-            <button className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm text-white/40">
+            <button
+              type="button"
+              onClick={iniciarDelivery}
+              className={`flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm ${
+                tipoAtendimento === "Delivery"
+                  ? "bg-[#f97316] font-bold text-white"
+                  : "text-white hover:bg-[#232323]"
+              }`}
+            >
               <span className="text-lg">🛵</span>
               Delivery
             </button>
@@ -2196,10 +2338,13 @@ Falta/sobra: ${money(
               Operações
             </a>
 
-            <button className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]">
+            <a
+              href="/correntistas"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-3 text-left text-sm hover:bg-[#232323]"
+            >
               <span className="text-lg">🤝</span>
               Clientes
-            </button>
+            </a>
 
             <button
               type="button"
@@ -2230,6 +2375,8 @@ Falta/sobra: ${money(
                     ? "PDV Mesa"
                     : tipoAtendimento === "Comanda"
                     ? "PDV Comanda"
+                    : tipoAtendimento === "Delivery"
+                    ? "PDV Delivery"
                     : "PDV Balcão"}
                 </p>
                 <h1 className="text-xl font-black text-[#111111]">
@@ -2585,7 +2732,9 @@ Falta/sobra: ${money(
                   <p className="mt-1 text-2xl font-black text-[#f97316]">
                     {atendimentoAtual.tipo === "Mesa"
                       ? `Mesa nº ${atendimentoAtual.mesaNumero}`
-                      : `Comanda ${atendimentoAtual.comandaNome || ""}`}
+                      : atendimentoAtual.tipo === "Comanda"
+                      ? `Comanda ${atendimentoAtual.comandaNome || ""}`
+                      : "Delivery"}
                   </p>
 
                   <p className="mt-1 text-sm font-bold">
@@ -2710,7 +2859,7 @@ Falta/sobra: ${money(
                   Valor a cobrar
                 </p>
                 <p className="mt-1 text-4xl font-black leading-none md:text-5xl">
-                  {money(totalBruto)}
+                  {money(valorCobrar)}
                 </p>
               </div>
             </div>
@@ -2937,7 +3086,9 @@ Falta/sobra: ${money(
                 <p className="mt-1 text-2xl font-black text-[#f97316]">
                   {atendimentoAtual.tipo === "Mesa"
                     ? `Mesa nº ${atendimentoAtual.mesaNumero}`
-                    : `Comanda ${atendimentoAtual.comandaNome || ""}`}
+                    : atendimentoAtual.tipo === "Comanda"
+                    ? `Comanda ${atendimentoAtual.comandaNome || ""}`
+                    : "Delivery"}
                 </p>
                 <p className="text-sm font-bold">
                   Cliente: {cliente || atendimentoAtual.cliente}
@@ -3111,6 +3262,15 @@ Falta/sobra: ${money(
                   - {money(descontoNumerico)}
                 </strong>
               </div>
+
+              {tipoAtendimento === "Delivery" && (
+                <div className="mt-2 flex justify-between">
+                  <span className="font-semibold text-[#111111]">Taxa de entrega cobrada</span>
+                  <strong className="text-lg font-black text-[#111111]">
+                    + {money(taxaEntregaValor)}
+                  </strong>
+                </div>
+              )}
 
               <div className="mt-2 flex justify-between">
                 <span className="font-semibold text-[#111111]">Valor a cobrar</span>

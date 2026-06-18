@@ -1,6 +1,17 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  LS_CONTAS_RECEBER,
+  LS_ENTRADAS,
+  buscarFinanceiroSupabase,
+  deduplicarPorId,
+  lerArrayLocalStorage,
+  removerLancamentoFinanceiroSupabase,
+  salvarArrayLocalStorage,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
 type StatusContaReceber = "Recebido" | "Pendente" | "Atrasado";
 
@@ -13,9 +24,31 @@ type ContaReceber = {
   formaRecebimento: string;
   valor: number;
   status: StatusContaReceber;
+  dataRecebimento?: string;
+  recebidoEm?: string;
 };
 
-const STORAGE_KEY = "gestor-restaurante-contas-receber";
+type EntradaRecebida = {
+  id: string;
+  data: string;
+  categoria: string;
+  descricao: string;
+  formaRecebimento: string;
+  valor: number;
+  valorBruto: number;
+  valorTaxa: number;
+  taxaDescontada: number;
+  valorLiquido: number;
+  valorCobrado: number;
+  status: "Recebido";
+  origem: string;
+  contaReceberId: string;
+  cliente: string;
+  criadoEm: string;
+  recebidoEm: string;
+};
+
+const STORAGE_KEY = LS_CONTAS_RECEBER;
 
 const categoriasReceber = [
   "Cliente",
@@ -68,92 +101,6 @@ function formatarData(data: string) {
   return `${dia}/${mes}/${ano}`;
 }
 
-function MenuLateral() {
-  return (
-    <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
-  );
-}
 
 export default function ContasAReceberPage() {
   const [contas, setContas] = useState<ContaReceber[]>([]);
@@ -170,21 +117,38 @@ export default function ContasAReceberPage() {
   const [status, setStatus] = useState<StatusContaReceber>("Pendente");
 
   useEffect(() => {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    let ativo = true;
 
-    if (dadosSalvos) {
+    async function carregarContas() {
+      const contasLocais = lerArrayLocalStorage<ContaReceber>(STORAGE_KEY);
+
+      if (ativo) {
+        setContas(contasLocais);
+      }
+
       try {
-        const dadosConvertidos = JSON.parse(dadosSalvos) as ContaReceber[];
+        const dados = await buscarFinanceiroSupabase();
+        const contasSupabase = (dados.contasReceber || []) as ContaReceber[];
+        const listaFinal = contasSupabase.length > 0
+          ? (deduplicarPorId(contasSupabase) as ContaReceber[])
+          : contasLocais;
 
-        if (Array.isArray(dadosConvertidos)) {
-          setContas(dadosConvertidos);
-        }
-      } catch {
-        setContas([]);
+        if (!ativo) return;
+
+        setContas(listaFinal);
+        salvarArrayLocalStorage(STORAGE_KEY, listaFinal);
+      } catch (erro) {
+        console.warn("Não foi possível carregar contas a receber do Supabase.", erro);
+      } finally {
+        if (ativo) setDadosCarregados(true);
       }
     }
 
-    setDadosCarregados(true);
+    carregarContas();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -229,7 +193,7 @@ export default function ContasAReceberPage() {
   const resumoPorCategoria = useMemo(() => {
     const totais = categoriasReceber.map((nome) => {
       const total = contas
-        .filter((conta) => conta.categoria === nome)
+        .filter((conta) => conta.categoria === nome && conta.status !== "Recebido")
         .reduce((soma, conta) => soma + conta.valor, 0);
 
       return {
@@ -241,7 +205,51 @@ export default function ContasAReceberPage() {
     return totais;
   }, [contas]);
 
-  function cadastrarConta(event: FormEvent<HTMLFormElement>) {
+  function criarEntradaRecebida(conta: ContaReceber): EntradaRecebida {
+    const agora = new Date().toISOString();
+    const dataRecebimento = conta.dataRecebimento || gerarDataHoje();
+
+    return {
+      id: `entrada-conta-receber-${conta.id}`,
+      data: dataRecebimento,
+      categoria: "Conta recebida",
+      descricao: `Recebimento de conta: ${conta.descricao}`,
+      formaRecebimento: conta.formaRecebimento || "Pix",
+      valor: conta.valor,
+      valorBruto: conta.valor,
+      valorTaxa: 0,
+      taxaDescontada: 0,
+      valorLiquido: conta.valor,
+      valorCobrado: conta.valor,
+      status: "Recebido",
+      origem: "Contas a receber",
+      contaReceberId: conta.id,
+      cliente: conta.origem,
+      criadoEm: agora,
+      recebidoEm: agora,
+    };
+  }
+
+  function salvarEntradaRecebidaLocal(entrada: EntradaRecebida) {
+    const entradasAtuais = lerArrayLocalStorage<EntradaRecebida>(LS_ENTRADAS);
+    const entradasAtualizadas = [
+      entrada,
+      ...entradasAtuais.filter((item) => item.id !== entrada.id),
+    ];
+
+    salvarArrayLocalStorage(LS_ENTRADAS, entradasAtualizadas);
+  }
+
+  function removerEntradaRecebidaLocal(contaId: string) {
+    const entradaId = `entrada-conta-receber-${contaId}`;
+    const entradasAtuais = lerArrayLocalStorage<EntradaRecebida>(LS_ENTRADAS);
+    salvarArrayLocalStorage(
+      LS_ENTRADAS,
+      entradasAtuais.filter((item) => item.id !== entradaId)
+    );
+  }
+
+  async function cadastrarConta(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorNumerico = Number(valor.replace(",", "."));
@@ -266,6 +274,7 @@ export default function ContasAReceberPage() {
       return;
     }
 
+    const agora = new Date().toISOString();
     const novaConta: ContaReceber = {
       id:
         typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -278,9 +287,24 @@ export default function ContasAReceberPage() {
       formaRecebimento,
       valor: valorNumerico,
       status,
+      dataRecebimento: status === "Recebido" ? gerarDataHoje() : undefined,
+      recebidoEm: status === "Recebido" ? agora : undefined,
     };
 
+    const entradaRecebida = status === "Recebido" ? criarEntradaRecebida(novaConta) : null;
+
     setContas((listaAtual) => [novaConta, ...listaAtual]);
+    if (entradaRecebida) salvarEntradaRecebidaLocal(entradaRecebida);
+
+    try {
+      await salvarFinanceiroSupabase({
+        contaReceber: novaConta,
+        ...(entradaRecebida ? { entrada: entradaRecebida } : {}),
+      });
+    } catch (erro) {
+      console.warn("Conta salva no cache local, mas não sincronizou com o Supabase.", erro);
+      alert("Salvei no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
 
     setData(gerarDataHoje());
     setOrigem("");
@@ -291,37 +315,66 @@ export default function ContasAReceberPage() {
     setStatus("Pendente");
   }
 
-  function excluirConta(id: string) {
-    const confirmar = window.confirm("Deseja excluir esta conta a receber?");
+  async function excluirConta(id: string) {
+    const confirmar = window.confirm("Deseja excluir esta conta a receber? Se ela já foi recebida, a entrada gerada também será removida.");
 
     if (!confirmar) return;
 
     setContas((listaAtual) => listaAtual.filter((conta) => conta.id !== id));
+    removerEntradaRecebidaLocal(id);
+
+    try {
+      await Promise.all([
+        removerLancamentoFinanceiroSupabase("conta_receber", id),
+        removerLancamentoFinanceiroSupabase("entrada", `entrada-conta-receber-${id}`),
+      ]);
+    } catch (erro) {
+      console.warn("Conta removida localmente, mas não sincronizou a exclusão no Supabase.", erro);
+      alert("Removi do navegador, mas não consegui excluir do Supabase agora.");
+    }
   }
 
-  function marcarComoRecebido(id: string) {
-    const confirmar = window.confirm("Deseja marcar esta conta como recebida?");
+  async function marcarComoRecebido(id: string) {
+    const contaOriginal = contas.find((conta) => conta.id === id);
+
+    if (!contaOriginal) {
+      alert("Conta a receber não encontrada.");
+      return;
+    }
+
+    const confirmar = window.confirm("Deseja marcar esta conta como recebida e lançar o valor no faturamento?");
 
     if (!confirmar) return;
 
-    setContas((listaAtual) =>
-      listaAtual.map((conta) => {
-        if (conta.id === id) {
-          return {
-            ...conta,
-            status: "Recebido",
-          };
-        }
+    const agora = new Date().toISOString();
+    const contaAtualizada: ContaReceber = {
+      ...contaOriginal,
+      status: "Recebido",
+      dataRecebimento: gerarDataHoje(),
+      recebidoEm: agora,
+    };
+    const entradaRecebida = criarEntradaRecebida(contaAtualizada);
 
-        return conta;
-      })
+    setContas((listaAtual) =>
+      listaAtual.map((conta) => (conta.id === id ? contaAtualizada : conta))
     );
+    salvarEntradaRecebidaLocal(entradaRecebida);
+
+    try {
+      await salvarFinanceiroSupabase({
+        contaReceber: contaAtualizada,
+        entrada: entradaRecebida,
+      });
+    } catch (erro) {
+      console.warn("Recebimento salvo localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Marquei como recebido no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <div className="flex min-h-screen">
-        <MenuLateral />
+        <AdminSidebar active="contas-a-receber" />
 
         <section className="flex-1 p-4 sm:p-6 lg:p-8">
           <div className="mb-8 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">

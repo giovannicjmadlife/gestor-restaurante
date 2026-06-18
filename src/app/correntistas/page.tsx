@@ -1,5 +1,6 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -20,18 +21,6 @@ type Correntista = {
 
 const STORAGE_KEY = "gestor-restaurante-correntistas";
 
-const menuItems = [
-  { label: "Dashboard", href: "/" },
-  { label: "Acessar PDV", href: "/pdv", destaque: true },
-  { label: "Entradas", href: "/entradas" },
-  { label: "Saídas", href: "/saidas" },
-  { label: "Contas a pagar", href: "/contas-a-pagar" },
-  { label: "Contas a receber", href: "/contas-a-receber" },
-  { label: "Folha de pagamento", href: "/folha-de-pagamento" },
-  { label: "Investimentos", href: "/investimentos" },
-  { label: "Relatórios", href: "/relatorios" },
-  { label: "Configurações", href: "/configuracoes" },
-];
 
 function criarId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -299,31 +288,7 @@ export default function CorrentistasPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            {menuItems.map((item) => (
-              <a
-                key={item.href}
-                href={item.href}
-                className={`block rounded-xl px-4 py-3 text-sm ${
-                  item.destaque
-                    ? "bg-orange-600 font-semibold text-white hover:bg-orange-700"
-                    : "font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {item.label}
-              </a>
-            ))}
-          </nav>
-        </aside>
+        <AdminSidebar />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8 flex flex-col gap-2">

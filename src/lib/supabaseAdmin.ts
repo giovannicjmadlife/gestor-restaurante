@@ -1,4 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+let cachedClient: SupabaseClient | null = null;
+let cachedUrl = "";
+let cachedKey = "";
 
 export function getSupabaseAdmin() {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -12,10 +16,23 @@ export function getSupabaseAdmin() {
     throw new Error("SUPABASE_SECRET_KEY não configurada.");
   }
 
-  return createClient(supabaseUrl, supabaseKey, {
+  if (cachedClient && cachedUrl === supabaseUrl && cachedKey === supabaseKey) {
+    return cachedClient;
+  }
+
+  cachedUrl = supabaseUrl;
+  cachedKey = supabaseKey;
+  cachedClient = createClient(supabaseUrl, supabaseKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
     },
+    global: {
+      headers: {
+        "X-Client-Info": "gestor-restaurante-server",
+      },
+    },
   });
+
+  return cachedClient;
 }

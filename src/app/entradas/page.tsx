@@ -1,6 +1,13 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { useEffect, useMemo, useState } from "react";
+import {
+  buscarFinanceiroSupabase,
+  deduplicarPorId,
+  removerLancamentoFinanceiroSupabase,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
 type TipoTaxa = "Percentual" | "Valor fixo";
 
@@ -135,6 +142,21 @@ function calcularValorTaxa(valorBruto: number, taxa?: TaxaCadastro) {
   return taxa.valor;
 }
 
+
+function normalizarTaxas(dados: unknown): TaxaCadastro[] {
+  if (!Array.isArray(dados)) return [];
+
+  return dados
+    .map((item: Record<string, any>) => ({
+      id: String(item.id || item.nome || criarId()),
+      nome: String(item.nome || "Taxa sem nome"),
+      tipo: (item.tipo === "Valor fixo" ? "Valor fixo" : "Percentual") as TipoTaxa,
+      valor: Number(String(item.valor ?? 0).replace(",", ".")) || 0,
+      ativo: item.ativo !== false,
+    }))
+    .filter((item) => item.ativo && item.valor >= 0);
+}
+
 export default function EntradasPage() {
   const [entradas, setEntradas] = useState<Entrada[]>([]);
   const [entradasExcluidas, setEntradasExcluidas] = useState<EntradaExcluida[]>(
@@ -154,22 +176,69 @@ export default function EntradasPage() {
   const [taxaSelecionadaId, setTaxaSelecionadaId] = useState("");
 
   useEffect(() => {
-    setEntradas(lerListaStorage<Entrada>(ENTRADAS_KEY));
+    let ativo = true;
+
+    const entradasLocais = lerListaStorage<Entrada>(ENTRADAS_KEY);
+    const taxasMaquininhasLocais = lerListaStorage<TaxaCadastro>(TAXAS_MAQUININHA_KEY).filter(
+      (taxa) => taxa.ativo
+    );
+    const taxasDeliveryLocais = lerListaStorage<TaxaCadastro>(TAXAS_DELIVERY_KEY).filter(
+      (taxa) => taxa.ativo
+    );
+
+    setEntradas(entradasLocais);
     setEntradasExcluidas(
       lerListaStorage<EntradaExcluida>(ENTRADAS_EXCLUIDAS_KEY)
     );
+    setTaxasMaquininhas(taxasMaquininhasLocais);
+    setTaxasDelivery(taxasDeliveryLocais);
 
-    setTaxasMaquininhas(
-      lerListaStorage<TaxaCadastro>(TAXAS_MAQUININHA_KEY).filter(
-        (taxa) => taxa.ativo
-      )
-    );
+    async function carregarSupabase() {
+      try {
+        const dados = await buscarFinanceiroSupabase();
+        const entradasSupabase = (dados.entradas || []) as Entrada[];
 
-    setTaxasDelivery(
-      lerListaStorage<TaxaCadastro>(TAXAS_DELIVERY_KEY).filter(
-        (taxa) => taxa.ativo
-      )
-    );
+        if (!ativo || entradasSupabase.length === 0) return;
+
+        const listaFinal = deduplicarPorId(entradasSupabase) as Entrada[];
+        setEntradas(listaFinal);
+        localStorage.setItem(ENTRADAS_KEY, JSON.stringify(listaFinal));
+      } catch (erro) {
+        console.warn("Não foi possível carregar entradas do Supabase.", erro);
+      }
+    }
+
+    async function carregarTaxas() {
+      try {
+        const resposta = await fetch("/api/taxas", { cache: "no-store" });
+        if (!resposta.ok) throw new Error(await resposta.text());
+
+        const dados = await resposta.json();
+        const maquininhasApi = normalizarTaxas(dados.maquininhas);
+        const deliveryApi = normalizarTaxas(dados.delivery);
+
+        if (!ativo) return;
+
+        if (maquininhasApi.length > 0) {
+          setTaxasMaquininhas(maquininhasApi);
+          localStorage.setItem(TAXAS_MAQUININHA_KEY, JSON.stringify(maquininhasApi));
+        }
+
+        if (deliveryApi.length > 0) {
+          setTaxasDelivery(deliveryApi);
+          localStorage.setItem(TAXAS_DELIVERY_KEY, JSON.stringify(deliveryApi));
+        }
+      } catch (erro) {
+        console.warn("Não foi possível carregar taxas do Supabase.", erro);
+      }
+    }
+
+    carregarSupabase();
+    carregarTaxas();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -278,7 +347,7 @@ export default function EntradasPage() {
     setTaxaSelecionadaId("");
   }
 
-  function cadastrarEntrada(event: React.FormEvent<HTMLFormElement>) {
+  async function cadastrarEntrada(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorBruto = Number(valor.replace(",", "."));
@@ -295,6 +364,7 @@ export default function EntradasPage() {
 
     const valorTaxa = calcularValorTaxa(valorBruto, taxaSelecionada);
     const valorLiquido = Math.max(valorBruto - valorTaxa, 0);
+    const agora = new Date().toISOString();
 
     const novaEntrada: Entrada = {
       id: criarId(),
@@ -305,17 +375,32 @@ export default function EntradasPage() {
       valor: valorLiquido,
       valorBruto,
       valorTaxa,
+      taxaDescontada: valorTaxa,
+      valorLiquido,
+      valorCobrado: valorBruto,
       tipoTaxaAplicada,
       taxaNome: taxaSelecionada?.nome ?? "Sem taxa",
       taxaTipo: taxaSelecionada?.tipo,
       taxaPercentualOuValor: taxaSelecionada?.valor,
-    };
+      status: "Recebido",
+      origem: "Entrada manual",
+      criadoEm: agora,
+      recebidoEm: agora,
+    } as Entrada;
 
     setEntradas((listaAtual) => [novaEntrada, ...listaAtual]);
+
+    try {
+      await salvarFinanceiroSupabase({ entrada: novaEntrada });
+    } catch (erro) {
+      console.warn("Entrada salva localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Salvei no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
+
     limparFormulario();
   }
 
-  function excluirEntrada(id: string) {
+  async function excluirEntrada(id: string) {
     const entradaEncontrada = entradas.find((item) => item.id === id);
 
     if (!entradaEncontrada) {
@@ -352,6 +437,14 @@ export default function EntradasPage() {
     setEntradasExcluidas((listaAtual) => [exclusaoRegistrada, ...listaAtual]);
     setEntradas((listaAtual) => listaAtual.filter((item) => item.id !== id));
 
+    try {
+      await removerLancamentoFinanceiroSupabase("entrada", id);
+    } catch (erro) {
+      console.warn("Entrada excluída localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Excluí no navegador, mas não consegui excluir do Supabase agora.");
+      return;
+    }
+
     alert("Entrada excluída com justificativa registrada.");
   }
 
@@ -363,88 +456,7 @@ export default function EntradasPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
+        <AdminSidebar active="entradas" />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8 flex flex-col gap-2">

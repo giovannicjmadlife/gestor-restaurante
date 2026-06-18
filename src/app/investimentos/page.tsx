@@ -1,6 +1,16 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { useEffect, useMemo, useState } from "react";
+import {
+  LS_INVESTIMENTOS,
+  buscarFinanceiroSupabase,
+  deduplicarPorId,
+  lerArrayLocalStorage,
+  removerLancamentoFinanceiroSupabase,
+  salvarArrayLocalStorage,
+  salvarFinanceiroSupabase,
+} from "@/lib/financeiroSupabase";
 
 type StatusInvestimento = "Pago" | "Pendente" | "Planejado";
 
@@ -25,7 +35,7 @@ type Investimento = {
   valor: number;
 };
 
-const STORAGE_KEY = "gestor-restaurante-investimentos";
+const STORAGE_KEY = LS_INVESTIMENTOS;
 
 const categorias: CategoriaInvestimento[] = [
   "Equipamentos",
@@ -62,6 +72,7 @@ function criarId() {
 
 export default function InvestimentosPage() {
   const [investimentos, setInvestimentos] = useState<Investimento[]>([]);
+  const [dadosCarregados, setDadosCarregados] = useState(false);
   const [data, setData] = useState(hojeISO());
   const [categoria, setCategoria] =
     useState<CategoriaInvestimento>("Equipamentos");
@@ -71,21 +82,44 @@ export default function InvestimentosPage() {
   const [valor, setValor] = useState("");
 
   useEffect(() => {
-    const dadosSalvos = localStorage.getItem(STORAGE_KEY);
+    let ativo = true;
 
-    if (dadosSalvos) {
+    async function carregarInvestimentos() {
+      const investimentosLocais = lerArrayLocalStorage<Investimento>(STORAGE_KEY);
+
+      if (ativo) {
+        setInvestimentos(investimentosLocais);
+      }
+
       try {
-        const dadosConvertidos = JSON.parse(dadosSalvos) as Investimento[];
-        setInvestimentos(dadosConvertidos);
-      } catch {
-        setInvestimentos([]);
+        const dados = await buscarFinanceiroSupabase();
+        const investimentosSupabase = (dados.investimentos || []) as Investimento[];
+        const listaFinal = investimentosSupabase.length > 0
+          ? (deduplicarPorId(investimentosSupabase) as Investimento[])
+          : investimentosLocais;
+
+        if (!ativo) return;
+
+        setInvestimentos(listaFinal);
+        salvarArrayLocalStorage(STORAGE_KEY, listaFinal);
+      } catch (erro) {
+        console.warn("Não foi possível carregar investimentos do Supabase.", erro);
+      } finally {
+        if (ativo) setDadosCarregados(true);
       }
     }
+
+    carregarInvestimentos();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(investimentos));
-  }, [investimentos]);
+    if (!dadosCarregados) return;
+    salvarArrayLocalStorage(STORAGE_KEY, investimentos);
+  }, [investimentos, dadosCarregados]);
 
   const resumo = useMemo(() => {
     const totalGeral = investimentos.reduce(
@@ -138,7 +172,7 @@ export default function InvestimentosPage() {
     setValor("");
   }
 
-  function cadastrarInvestimento(event: React.FormEvent<HTMLFormElement>) {
+  async function cadastrarInvestimento(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const valorNumerico = Number(valor.replace(",", "."));
@@ -156,13 +190,22 @@ export default function InvestimentosPage() {
       fornecedor: fornecedor.trim(),
       status,
       valor: valorNumerico,
-    };
+      ...(status === "Pago" ? { dataPagamento: data, pagoEm: new Date().toISOString() } : {}),
+    } as Investimento;
 
     setInvestimentos((listaAtual) => [novoInvestimento, ...listaAtual]);
+
+    try {
+      await salvarFinanceiroSupabase({ investimento: novoInvestimento });
+    } catch (erro) {
+      console.warn("Investimento salvo localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Salvei no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
+
     limparFormulario();
   }
 
-  function excluirInvestimento(id: string) {
+  async function excluirInvestimento(id: string) {
     const confirmar = confirm("Deseja realmente excluir este investimento?");
 
     if (!confirmar) {
@@ -172,101 +215,43 @@ export default function InvestimentosPage() {
     setInvestimentos((listaAtual) =>
       listaAtual.filter((item) => item.id !== id)
     );
+
+    try {
+      await removerLancamentoFinanceiroSupabase("investimento", id);
+    } catch (erro) {
+      console.warn("Investimento excluído localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Excluí no navegador, mas não consegui excluir do Supabase agora.");
+    }
   }
 
-  function marcarComoPago(id: string) {
+  async function marcarComoPago(id: string) {
+    const investimentoOriginal = investimentos.find((item) => item.id === id);
+
+    if (!investimentoOriginal) return;
+
+    const atualizado = {
+      ...investimentoOriginal,
+      status: "Pago" as StatusInvestimento,
+      dataPagamento: hojeISO(),
+      pagoEm: new Date().toISOString(),
+    };
+
     setInvestimentos((listaAtual) =>
-      listaAtual.map((item) =>
-        item.id === id ? { ...item, status: "Pago" } : item
-      )
+      listaAtual.map((item) => (item.id === id ? atualizado : item))
     );
+
+    try {
+      await salvarFinanceiroSupabase({ investimento: atualizado });
+    } catch (erro) {
+      console.warn("Pagamento do investimento salvo localmente, mas não sincronizou com o Supabase.", erro);
+      alert("Marquei como pago no navegador, mas não consegui sincronizar com o Supabase agora.");
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Configurações
-            </a>
-
-          </nav>
-        </aside>
+        <AdminSidebar active="investimentos" />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8 flex flex-col gap-2">
@@ -438,7 +423,7 @@ export default function InvestimentosPage() {
                   </h2>
 
                   <p className="text-sm text-slate-500">
-                    Todos os investimentos ficam salvos neste navegador.
+                    Todos os investimentos ficam salvos no Supabase com cache local.
                   </p>
                 </div>
 

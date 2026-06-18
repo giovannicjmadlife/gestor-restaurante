@@ -1,0 +1,7 @@
+.git
+.next
+node_modules
+.env.local
+*.zip
+**/*.backup.tsx
+tsconfig.tsbuildinfo

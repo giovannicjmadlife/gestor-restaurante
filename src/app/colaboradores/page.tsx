@@ -1,5 +1,6 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Colaborador,
@@ -21,11 +22,6 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-const linkBase =
-  "block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white";
-const linkAtivo = "block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white";
-const linkPdv =
-  "block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700";
 
 export default function ColaboradoresPage() {
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
@@ -33,6 +29,9 @@ export default function ColaboradoresPage() {
   const [nome, setNome] = useState("");
   const [percentualComissao, setPercentualComissao] = useState("");
   const [telefone, setTelefone] = useState("");
+  const [salarioMensal, setSalarioMensal] = useState("");
+  const [diaPagamento, setDiaPagamento] = useState("5");
+  const [funcao, setFuncao] = useState("Atendimento");
   const [observacoes, setObservacoes] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -106,6 +105,9 @@ export default function ColaboradoresPage() {
     setNome("");
     setPercentualComissao("");
     setTelefone("");
+    setSalarioMensal("");
+    setDiaPagamento("5");
+    setFuncao("Atendimento");
     setObservacoes("");
   }
 
@@ -114,6 +116,8 @@ export default function ColaboradoresPage() {
 
     const nomeTratado = nome.trim();
     const percentual = numeroSeguro(percentualComissao);
+    const salario = numeroSeguro(salarioMensal);
+    const dia = Math.min(31, Math.max(1, Math.trunc(numeroSeguro(diaPagamento) || 5)));
 
     if (!nomeTratado) {
       alert("Informe o nome do colaborador.");
@@ -137,6 +141,9 @@ export default function ColaboradoresPage() {
             nome: nomeTratado,
             percentualComissao: percentual,
             telefone: telefone.trim(),
+            salarioMensal: salario,
+            diaPagamento: dia,
+            funcao: funcao.trim() || "Atendimento",
             observacoes: observacoes.trim(),
             atualizadoEm: agora,
           };
@@ -153,6 +160,9 @@ export default function ColaboradoresPage() {
         nome: nomeTratado,
         percentualComissao: percentual,
         telefone: telefone.trim(),
+        salarioMensal: salario,
+        diaPagamento: dia,
+        funcao: funcao.trim() || "Atendimento",
         observacoes: observacoes.trim(),
         ativo: true,
         criadoEm: agora,
@@ -174,6 +184,9 @@ export default function ColaboradoresPage() {
     setNome(colaborador.nome);
     setPercentualComissao(String(colaborador.percentualComissao ?? 0));
     setTelefone(colaborador.telefone || "");
+    setSalarioMensal(String(numeroSeguro(colaborador.salarioMensal)));
+    setDiaPagamento(String(numeroSeguro(colaborador.diaPagamento) || 5));
+    setFuncao(colaborador.funcao || "Atendimento");
     setObservacoes(colaborador.observacoes || "");
   }
 
@@ -226,61 +239,7 @@ export default function ColaboradoresPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a href="/" className={linkBase}>
-              Dashboard
-            </a>
-
-            <a href="/pdv" className={linkPdv}>
-              Acessar PDV
-            </a>
-
-            <a href="/entradas" className={linkBase}>
-              Entradas
-            </a>
-
-            <a href="/saidas" className={linkBase}>
-              Saídas
-            </a>
-
-            <a href="/contas-a-pagar" className={linkBase}>
-              Contas a pagar
-            </a>
-
-            <a href="/contas-a-receber" className={linkBase}>
-              Contas a receber
-            </a>
-
-            <a href="/folha-de-pagamento" className={linkBase}>
-              Folha de pagamento
-            </a>
-
-            <a href="/colaboradores" className={linkAtivo}>
-              Colaboradores
-            </a>
-
-            <a href="/investimentos" className={linkBase}>
-              Investimentos
-            </a>
-
-            <a href="/relatorios" className={linkBase}>
-              Relatórios
-            </a>
-
-            <a href="/configuracoes" className={linkBase}>
-              Configurações
-            </a>
-          </nav>
-        </aside>
+        <AdminSidebar active="colaboradores" />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8">
@@ -361,6 +320,43 @@ export default function ColaboradoresPage() {
                   />
                 </div>
 
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="text-sm font-bold text-slate-700">Salário mensal opcional</label>
+                    <input
+                      value={salarioMensal}
+                      onChange={(event) => setSalarioMensal(event.target.value)}
+                      placeholder="Ex: 1500"
+                      className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-orange-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-bold text-slate-700">Dia de pagamento</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={diaPagamento}
+                      onChange={(event) => setDiaPagamento(event.target.value)}
+                      className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold text-slate-700">Função na folha</label>
+                  <input
+                    value={funcao}
+                    onChange={(event) => setFuncao(event.target.value)}
+                    placeholder="Ex: Cozinha, Atendimento, Caixa..."
+                    className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-orange-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Se houver salário mensal, a Folha gera uma conta mensal até o colaborador ser inativado ou removido.
+                  </p>
+                </div>
+
                 <div>
                   <label className="text-sm font-bold text-slate-700">Observações</label>
                   <textarea
@@ -411,6 +407,11 @@ export default function ColaboradoresPage() {
                             Comissão: {numeroSeguro(colaborador.percentualComissao).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%
                             {colaborador.telefone ? ` · ${colaborador.telefone}` : ""}
                           </p>
+                          {numeroSeguro(colaborador.salarioMensal) > 0 && (
+                            <p className="mt-1 text-sm text-slate-500">
+                              Salário: {formatarMoeda(numeroSeguro(colaborador.salarioMensal))} · pagamento dia {numeroSeguro(colaborador.diaPagamento) || 5}
+                            </p>
+                          )}
                           <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${colaborador.ativo === false ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
                             {colaborador.ativo === false ? "Inativo" : "Ativo"}
                           </span>

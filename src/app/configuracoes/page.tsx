@@ -1,5 +1,6 @@
 "use client";
 
+import AdminSidebar from "@/components/AdminSidebar";
 import { useEffect, useMemo, useState } from "react";
 
 type ConfiguracoesRestaurante = {
@@ -161,44 +162,67 @@ export default function ConfiguracoesPage() {
       }
     }
 
-    const entregaSalva = lerTaxaEntregaStorage();
+    const entregaLocal = lerTaxaEntregaStorage();
+    const maquininhasLocais = lerListaStorage<TaxaCadastro>(TAXAS_MAQUININHA_KEY);
+    const deliveryLocal = lerListaStorage<TaxaCadastro>(TAXAS_DELIVERY_KEY);
 
-    setTaxaEntrega(entregaSalva);
-    setValorTaxaEntrega(String(entregaSalva.valor));
+    setTaxaEntrega(entregaLocal);
+    setValorTaxaEntrega(String(entregaLocal.valor));
+    setTaxasMaquininhas(maquininhasLocais);
+    setTaxasDelivery(deliveryLocal);
 
-    setTaxasMaquininhas(
-      lerListaStorage<TaxaCadastro>(TAXAS_MAQUININHA_KEY)
-    );
+    let cancelado = false;
 
-    setTaxasDelivery(lerListaStorage<TaxaCadastro>(TAXAS_DELIVERY_KEY));
-    setTaxasCarregadas(true);
+    async function carregarTaxas() {
+      try {
+        const resposta = await fetch("/api/taxas", { cache: "no-store" });
+        const dados = resposta.ok ? await resposta.json() : null;
 
-    fetch("/api/taxas", { cache: "no-store" })
-      .then((resposta) => (resposta.ok ? resposta.json() : null))
-      .then((dados) => {
-        if (!dados) return;
+        if (cancelado || !dados) return;
 
-        if (Array.isArray(dados.maquininhas)) {
-          setTaxasMaquininhas(dados.maquininhas);
+        const maquininhasSupabase = Array.isArray(dados.maquininhas)
+          ? dados.maquininhas
+          : [];
+        const deliverySupabase = Array.isArray(dados.delivery) ? dados.delivery : [];
+
+        if (maquininhasSupabase.length > 0) {
+          setTaxasMaquininhas(maquininhasSupabase);
+          localStorage.setItem(TAXAS_MAQUININHA_KEY, JSON.stringify(maquininhasSupabase));
+        } else if (maquininhasLocais.length > 0) {
+          await salvarTaxasNoSupabase(maquininhasLocais, deliveryLocal, entregaLocal);
         }
 
-        if (Array.isArray(dados.delivery)) {
-          setTaxasDelivery(dados.delivery);
+        if (deliverySupabase.length > 0) {
+          setTaxasDelivery(deliverySupabase);
+          localStorage.setItem(TAXAS_DELIVERY_KEY, JSON.stringify(deliverySupabase));
         }
 
         if (dados.entrega) {
-          setTaxaEntrega({
+          const entregaSupabase = {
             ...taxaEntregaPadrao,
             ...dados.entrega,
             valor: Number(dados.entrega.valor || 0),
             ativo: dados.entrega.ativo !== false,
-          });
-          setValorTaxaEntrega(String(dados.entrega.valor || 0));
+          };
+
+          setTaxaEntrega(entregaSupabase);
+          setValorTaxaEntrega(String(entregaSupabase.valor || 0));
+          localStorage.setItem(TAXA_ENTREGA_KEY, JSON.stringify(entregaSupabase));
+        } else if (entregaLocal) {
+          await salvarTaxasNoSupabase(maquininhasLocais, deliveryLocal, entregaLocal);
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error("Não foi possível carregar taxas do Supabase.", error);
-      });
+      } finally {
+        if (!cancelado) setTaxasCarregadas(true);
+      }
+    }
+
+    carregarTaxas();
+
+    return () => {
+      cancelado = true;
+    };
   }, []);
 
   async function salvarTaxasNoSupabase(
@@ -218,6 +242,24 @@ export default function ConfiguracoesPage() {
       }
     } catch (error) {
       console.error("Não foi possível salvar taxas no Supabase.", error);
+    }
+  }
+
+
+  async function removerTaxaNoSupabase(id: string) {
+    try {
+      const resposta = await fetch("/api/taxas", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+
+      if (!resposta.ok) {
+        throw new Error(await resposta.text());
+      }
+    } catch (error) {
+      console.error("Não foi possível remover a taxa do Supabase.", error);
+      alert("Removi no navegador, mas não consegui remover do Supabase agora.");
     }
   }
 
@@ -453,6 +495,7 @@ export default function ConfiguracoesPage() {
     setTaxasMaquininhas((listaAtual) =>
       listaAtual.filter((taxa) => taxa.id !== id)
     );
+    removerTaxaNoSupabase(id);
 
     if (editandoMaquininhaId === id) {
       limparFormularioMaquininha();
@@ -469,6 +512,7 @@ export default function ConfiguracoesPage() {
     setTaxasDelivery((listaAtual) =>
       listaAtual.filter((taxa) => taxa.id !== id)
     );
+    removerTaxaNoSupabase(id);
 
     if (editandoDeliveryId === id) {
       limparFormularioDelivery();
@@ -494,87 +538,7 @@ export default function ConfiguracoesPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 shrink-0 bg-slate-950 text-white">
-          <div className="border-b border-white/10 px-6 py-6">
-            <img
-              src="/logo-01.png"
-              alt="Samambaia Restaurante e Pizzaria"
-              className="max-h-20 w-auto"
-            />
-          </div>
-
-          <nav className="space-y-2 px-4 py-6">
-            <a
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/pdv"
-              className="block rounded-xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-700"
-            >
-              Acessar PDV
-            </a>
-
-            <a
-              href="/entradas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Entradas
-            </a>
-
-            <a
-              href="/saidas"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Saídas
-            </a>
-
-            <a
-              href="/contas-a-pagar"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a pagar
-            </a>
-
-            <a
-              href="/contas-a-receber"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Contas a receber
-            </a>
-
-            <a
-              href="/folha-de-pagamento"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Folha de pagamento
-            </a>
-
-            <a
-              href="/investimentos"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Investimentos
-            </a>
-
-            <a
-              href="/relatorios"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white"
-            >
-              Relatórios
-            </a>
-
-            <a
-              href="/configuracoes"
-              className="block rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white"
-            >
-              Configurações
-            </a>
-          </nav>
-        </aside>
+        <AdminSidebar active="configuracoes" />
 
         <section className="flex-1 px-8 py-8">
           <div className="mb-8 flex flex-col gap-2">
