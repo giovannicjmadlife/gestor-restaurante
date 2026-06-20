@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { useEffect, useMemo, useState } from "react";
 import {
   LS_CONTAS_RECEBER,
@@ -11,16 +15,14 @@ import {
   LS_VENDAS_DETALHADAS,
   RegistroFinanceiro,
   buscarFinanceiroSupabase,
-  buscarTaxasSupabase,
   dataDoRegistro,
   descontoRegistro,
   formatarMoeda,
   lerArrayLocalStorage,
   numeroSeguro,
-  registroEstaNoMes,
-  taxaRegistroComCadastro,
+  taxaRegistro,
   valorBrutoRegistro,
-  valorLiquidoRegistroComCadastro,
+  valorLiquidoRegistro,
 } from "@/lib/financeiroSupabase";
 
 type LancamentoRelatorio = {
@@ -50,7 +52,7 @@ function estaAberto(item: RegistroFinanceiro) {
 }
 
 function valorRegistro(item: RegistroFinanceiro) {
-  return numeroSeguro(item.valor) || valorLiquidoRegistroComCadastro(item) || valorBrutoRegistro(item);
+  return numeroSeguro(item.valor) || valorLiquidoRegistro(item) || valorBrutoRegistro(item);
 }
 
 function deduplicarReceitas(entradas: RegistroFinanceiro[], vendasDetalhadas: RegistroFinanceiro[]) {
@@ -70,9 +72,9 @@ export default function RelatoriosPage() {
   const [contasReceber, setContasReceber] = useState<RegistroFinanceiro[]>([]);
   const [folhaPagamento, setFolhaPagamento] = useState<RegistroFinanceiro[]>([]);
   const [investimentos, setInvestimentos] = useState<RegistroFinanceiro[]>([]);
-  const [taxasMaquininhas, setTaxasMaquininhas] = useState<any[]>([]);
-  const [taxasDelivery, setTaxasDelivery] = useState<any[]>([]);
   const [erro, setErro] = useState("");
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
 
   useEffect(() => {
     let ativo = true;
@@ -84,8 +86,8 @@ export default function RelatoriosPage() {
     setFolhaPagamento(lerArrayLocalStorage<RegistroFinanceiro>(LS_FOLHA));
     setInvestimentos(lerArrayLocalStorage<RegistroFinanceiro>(LS_INVESTIMENTOS));
 
-    Promise.all([buscarFinanceiroSupabase(), buscarTaxasSupabase()])
-      .then(([dados, taxas]) => {
+    buscarFinanceiroSupabase()
+      .then((dados) => {
         if (!ativo) return;
         setEntradas(dados.entradas || []);
         setVendasDetalhadas(dados.vendasDetalhadas || []);
@@ -93,8 +95,6 @@ export default function RelatoriosPage() {
         setContasReceber(dados.contasReceber || []);
         setFolhaPagamento(dados.folhaPagamento || []);
         setInvestimentos(dados.investimentos || []);
-        setTaxasMaquininhas(taxas.maquininhas || []);
-        setTaxasDelivery(taxas.delivery || []);
         setErro("");
       })
       .catch((error) => {
@@ -109,33 +109,53 @@ export default function RelatoriosPage() {
 
   const receitas = useMemo(() => deduplicarReceitas(entradas, vendasDetalhadas), [entradas, vendasDetalhadas]);
 
+  const receitasFiltradas = useMemo(
+    () => receitas.filter((item) => dataNoPeriodo(dataDoRegistro(item), dataInicial, dataFinal)),
+    [receitas, dataInicial, dataFinal]
+  );
+  const saidasFiltradas = useMemo(
+    () => saidas.filter((item) => dataNoPeriodo(dataDoRegistro(item), dataInicial, dataFinal)),
+    [saidas, dataInicial, dataFinal]
+  );
+  const contasReceberFiltradas = useMemo(
+    () => contasReceber.filter((item) => dataNoPeriodo(dataDoRegistro(item), dataInicial, dataFinal)),
+    [contasReceber, dataInicial, dataFinal]
+  );
+  const folhaFiltrada = useMemo(
+    () => folhaPagamento.filter((item) => dataNoPeriodo(dataDoRegistro(item), dataInicial, dataFinal)),
+    [folhaPagamento, dataInicial, dataFinal]
+  );
+  const investimentosFiltrados = useMemo(
+    () => investimentos.filter((item) => dataNoPeriodo(dataDoRegistro(item), dataInicial, dataFinal)),
+    [investimentos, dataInicial, dataFinal]
+  );
+
   const resumo = useMemo(() => {
-    const receitasMes = receitas.filter((item) => registroEstaNoMes(item));
-    const receitaBrutaMes = receitasMes.reduce((acc, item) => acc + valorBrutoRegistro(item), 0);
-    const receitaLiquidaMes = receitasMes.reduce((acc, item) => acc + valorLiquidoRegistroComCadastro(item, taxasMaquininhas, taxasDelivery), 0);
-    const taxasMes = receitasMes.reduce((acc, item) => acc + taxaRegistroComCadastro(item, taxasMaquininhas, taxasDelivery), 0);
-    const descontosMes = receitasMes.reduce((acc, item) => acc + descontoRegistro(item), 0);
+    const receitaBrutaMes = receitasFiltradas.reduce((acc, item) => acc + valorBrutoRegistro(item), 0);
+    const receitaLiquidaMes = receitasFiltradas.reduce((acc, item) => acc + valorLiquidoRegistro(item), 0);
+    const taxasMes = receitasFiltradas.reduce((acc, item) => acc + taxaRegistro(item), 0);
+    const descontosMes = receitasFiltradas.reduce((acc, item) => acc + descontoRegistro(item), 0);
 
-    const saidasPagasMes = saidas
-      .filter((item) => registroEstaNoMes(item) && estaPago(item))
+    const saidasPagasMes = saidasFiltradas
+      .filter(estaPago)
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
-    const folhaPagaMes = folhaPagamento
-      .filter((item) => registroEstaNoMes(item) && estaPago(item))
+    const folhaPagaMes = folhaFiltrada
+      .filter(estaPago)
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
-    const investimentosPagosMes = investimentos
-      .filter((item) => registroEstaNoMes(item) && estaPago(item))
+    const investimentosPagosMes = investimentosFiltrados
+      .filter(estaPago)
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
-    const contasAPagar = [...saidas.filter(estaAberto), ...folhaPagamento.filter(estaAberto)]
+    const contasAPagar = [...saidasFiltradas.filter(estaAberto), ...folhaFiltrada.filter(estaAberto)]
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
-    const contasAReceber = contasReceber
+    const contasAReceber = contasReceberFiltradas
       .filter(estaAberto)
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
-    const investimentosPendentes = investimentos
+    const investimentosPendentes = investimentosFiltrados
       .filter(estaAberto)
       .reduce((acc, item) => acc + valorRegistro(item), 0);
 
@@ -155,9 +175,9 @@ export default function RelatoriosPage() {
       investimentosPendentes,
       resultadoOperacional,
       saldoPrevisto,
-      totalLancamentos: receitas.length + saidas.length + contasReceber.length + folhaPagamento.length + investimentos.length,
+      totalLancamentos: receitasFiltradas.length + saidasFiltradas.length + contasReceberFiltradas.length + folhaFiltrada.length + investimentosFiltrados.length,
     };
-  }, [receitas, saidas, contasReceber, folhaPagamento, investimentos, taxasMaquininhas, taxasDelivery]);
+  }, [receitasFiltradas, saidasFiltradas, contasReceberFiltradas, folhaFiltrada, investimentosFiltrados]);
 
   const margemLucro = useMemo(() => {
     if (resumo.receitaLiquidaMes <= 0) return 0;
@@ -166,21 +186,21 @@ export default function RelatoriosPage() {
 
   const rankingEntradas = useMemo(() => {
     const mapa = new Map<string, number>();
-    receitas.filter((item) => registroEstaNoMes(item)).forEach((item) => {
+    receitasFiltradas.forEach((item) => {
       const categoria = String(item.categoria || "Sem categoria");
-      mapa.set(categoria, (mapa.get(categoria) || 0) + valorLiquidoRegistroComCadastro(item, taxasMaquininhas, taxasDelivery));
+      mapa.set(categoria, (mapa.get(categoria) || 0) + valorLiquidoRegistro(item));
     });
     return Array.from(mapa.entries()).map(([categoria, total]) => ({ categoria, total })).sort((a, b) => b.total - a.total).slice(0, 8);
-  }, [receitas, taxasMaquininhas, taxasDelivery]);
+  }, [receitasFiltradas]);
 
   const rankingSaidas = useMemo(() => {
     const mapa = new Map<string, number>();
-    saidas.filter((item) => registroEstaNoMes(item) && estaPago(item)).forEach((item) => {
+    saidasFiltradas.filter(estaPago).forEach((item) => {
       const categoria = String(item.categoria || "Sem categoria");
       mapa.set(categoria, (mapa.get(categoria) || 0) + valorRegistro(item));
     });
     return Array.from(mapa.entries()).map(([categoria, total]) => ({ categoria, total })).sort((a, b) => b.total - a.total).slice(0, 8);
-  }, [saidas]);
+  }, [saidasFiltradas]);
 
   const lancamentosRecentes = useMemo<LancamentoRelatorio[]>(() => {
     const mapear = (lista: RegistroFinanceiro[], tipo: string, statusPadrao: string, negativo = false) =>
@@ -195,21 +215,21 @@ export default function RelatoriosPage() {
       }));
 
     return [
-      ...mapear(receitas, "Entrada", "Recebido"),
-      ...mapear(saidas, "Saída", "-", true),
-      ...mapear(contasReceber, "Conta a receber", "Pendente"),
-      ...mapear(folhaPagamento, "Folha", "Pendente", true),
-      ...mapear(investimentos, "Investimento", "Planejado", true),
+      ...mapear(receitasFiltradas, "Entrada", "Recebido"),
+      ...mapear(saidasFiltradas, "Saída", "-", true),
+      ...mapear(contasReceberFiltradas, "Conta a receber", "Pendente"),
+      ...mapear(folhaFiltrada, "Folha", "Pendente", true),
+      ...mapear(investimentosFiltrados, "Investimento", "Planejado", true),
     ]
       .sort((a, b) => b.data.localeCompare(a.data))
       .slice(0, 12);
-  }, [receitas, saidas, contasReceber, folhaPagamento, investimentos, taxasMaquininhas, taxasDelivery]);
+  }, [receitasFiltradas, saidasFiltradas, contasReceberFiltradas, folhaFiltrada, investimentosFiltrados]);
 
   const diagnostico = useMemo(() => {
-    if (resumo.receitaLiquidaMes <= 0) return "Ainda não há receita líquida no mês para diagnóstico.";
-    if (resumo.resultadoOperacional < 0) return "Resultado negativo no mês: revise saídas pagas, folha e investimentos já pagos.";
+    if (resumo.receitaLiquidaMes <= 0) return "Ainda não há receita líquida no período para diagnóstico.";
+    if (resumo.resultadoOperacional < 0) return "Resultado negativo no período: revise saídas pagas, folha e investimentos já pagos.";
     if (resumo.contasAReceber > resumo.receitaLiquidaMes * 0.5) return "Há valor alto em contas a receber. Confira cobranças pendentes.";
-    if (resumo.contasAPagar > resumo.receitaLiquidaMes * 0.5) return "Há muitas contas em aberto em relação à receita líquida do mês.";
+    if (resumo.contasAPagar > resumo.receitaLiquidaMes * 0.5) return "Há muitas contas em aberto em relação à receita líquida do período.";
     return "Resultado positivo: continue acompanhando taxas, despesas pagas, folha e recebíveis.";
   }, [resumo]);
 
@@ -226,16 +246,25 @@ export default function RelatoriosPage() {
             {erro && <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{erro}</p>}
           </div>
 
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros dos relatórios"
+            descricao={`Todos os indicadores e rankings estão filtrados no período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
+
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card titulo="Receita bruta do mês" valor={resumo.receitaBrutaMes} detalhe="Antes de taxas e descontos." cor="text-slate-950" />
+            <Card titulo="Receita bruta do período" valor={resumo.receitaBrutaMes} detalhe="Antes de taxas e descontos." cor="text-slate-950" />
             <Card titulo="Receita líquida real" valor={resumo.receitaLiquidaMes} detalhe="Depois das taxas." cor="text-emerald-700" />
             <Card titulo="Taxas descontadas" valor={resumo.taxasMes} detalhe={`Descontos: ${formatarMoeda(resumo.descontosMes)}`} cor="text-red-600" />
             <Card titulo="Resultado operacional" valor={resumo.resultadoOperacional} detalhe="Líquido - pagos." cor={resumo.resultadoOperacional >= 0 ? "text-emerald-700" : "text-red-600"} />
-            <Card titulo="Despesas pagas" valor={resumo.saidasPagasMes} detalhe="Saídas pagas no mês." cor="text-red-600" />
+            <Card titulo="Despesas pagas" valor={resumo.saidasPagasMes} detalhe="Saídas pagas no período." cor="text-red-600" />
             <Card titulo="Folha paga" valor={resumo.folhaPagaMes} detalhe="Folha marcada como paga." cor="text-purple-700" />
             <Card titulo="Contas a receber" valor={resumo.contasAReceber} detalhe="Pendentes ou atrasadas." cor="text-blue-700" />
             <Card titulo="Contas a pagar" valor={resumo.contasAPagar} detalhe="Saídas e folha em aberto." cor="text-orange-600" />
-            <Card titulo="Investimentos pagos" valor={resumo.investimentosPagosMes} detalhe="Pagos no mês." cor="text-indigo-700" />
+            <Card titulo="Investimentos pagos" valor={resumo.investimentosPagosMes} detalhe="Pagos no período." cor="text-indigo-700" />
             <Card titulo="Investimentos em aberto" valor={resumo.investimentosPendentes} detalhe="Pendentes ou planejados." cor="text-indigo-700" />
             <Card titulo="Saldo previsto" valor={resumo.saldoPrevisto} detalhe="Resultado + receber - pagar - investimentos." cor={resumo.saldoPrevisto >= 0 ? "text-emerald-700" : "text-red-600"} />
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -248,7 +277,7 @@ export default function RelatoriosPage() {
           <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-6">
             <h2 className="text-xl font-bold text-slate-950">Diagnóstico rápido</h2>
             <p className="mt-3 text-sm leading-6 text-slate-700">{diagnostico}</p>
-            <p className="mt-3 text-xs text-slate-500">Total de lançamentos no sistema: {resumo.totalLancamentos}</p>
+            <p className="mt-3 text-xs text-slate-500">Lançamentos no período: {resumo.totalLancamentos}</p>
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -273,7 +302,7 @@ export default function RelatoriosPage() {
 
           <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6">
             <h2 className="text-xl font-bold text-slate-950">Lançamentos recentes</h2>
-            <p className="mt-1 text-sm text-slate-500">Últimos registros consolidados de todos os módulos.</p>
+            <p className="mt-1 text-sm text-slate-500">Últimos registros consolidados do período selecionado.</p>
 
             {lancamentosRecentes.length === 0 ? (
               <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">Nenhum lançamento encontrado.</div>

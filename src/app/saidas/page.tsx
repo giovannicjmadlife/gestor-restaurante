@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   LS_SAIDAS,
@@ -86,6 +90,8 @@ function formatarData(data: string) {
 export default function SaidasPage() {
   const [saidas, setSaidas] = useState<Saida[]>([]);
   const [dadosCarregados, setDadosCarregados] = useState(false);
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
 
   const [data, setData] = useState(gerarDataHoje());
   const [categoria, setCategoria] = useState(categoriasSaida[0]);
@@ -135,55 +141,47 @@ export default function SaidasPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(saidas));
   }, [saidas, dadosCarregados]);
 
+  const saidasFiltradas = useMemo(
+    () => saidas.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [saidas, dataInicial, dataFinal]
+  );
+
   const saidasOrdenadas = useMemo(() => {
-    return [...saidas].sort((a, b) => {
+    return [...saidasFiltradas].sort((a, b) => {
       return new Date(b.data).getTime() - new Date(a.data).getTime();
     });
-  }, [saidas]);
+  }, [saidasFiltradas]);
 
   const resumo = useMemo(() => {
-    const hoje = gerarDataHoje();
-    const mesAtual = hoje.slice(0, 7);
+    const totalGeral = saidasFiltradas.reduce((soma, saida) => soma + saida.valor, 0);
 
-    const saidasDoMes = saidas.filter(
-      (saida) => saida.data.startsWith(mesAtual) && saida.status === "Pago"
-    );
-
-    const totalGeral = saidas.reduce((soma, saida) => soma + saida.valor, 0);
-
-    const totalMes = saidasDoMes.reduce(
-      (soma, saida) => soma + saida.valor,
-      0
-    );
-
-    const totalPago = saidas.reduce((soma, saida) => {
+    const totalPago = saidasFiltradas.reduce((soma, saida) => {
       if (saida.status === "Pago") return soma + saida.valor;
       return soma;
     }, 0);
 
-    const totalPendente = saidas.reduce((soma, saida) => {
+    const totalPendente = saidasFiltradas.reduce((soma, saida) => {
       if (saida.status === "Pendente") return soma + saida.valor;
       return soma;
     }, 0);
 
-    const totalVencido = saidas.reduce((soma, saida) => {
+    const totalVencido = saidasFiltradas.reduce((soma, saida) => {
       if (saida.status === "Vencido") return soma + saida.valor;
       return soma;
     }, 0);
 
     return {
       totalGeral,
-      totalMes,
       totalPago,
       totalPendente,
       totalVencido,
-      quantidade: saidas.length,
+      quantidade: saidasFiltradas.length,
     };
-  }, [saidas]);
+  }, [saidasFiltradas]);
 
   const resumoPorCategoria = useMemo(() => {
     const totais = categoriasSaida.map((nome) => {
-      const total = saidas
+      const total = saidasFiltradas
         .filter((saida) => saida.categoria === nome)
         .reduce((soma, saida) => soma + saida.valor, 0);
 
@@ -194,7 +192,7 @@ export default function SaidasPage() {
     });
 
     return totais;
-  }, [saidas]);
+  }, [saidasFiltradas]);
 
   async function cadastrarSaida(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -322,13 +320,22 @@ export default function SaidasPage() {
             </div>
           </div>
 
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros de saídas"
+            descricao={`Os valores e a lista mostram o período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
+
           <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <p className="text-sm font-semibold text-slate-500">
-                Saídas do mês
+                Saídas no período
               </p>
               <strong className="mt-3 block text-2xl font-black">
-                {formatarMoeda(resumo.totalMes)}
+                {formatarMoeda(resumo.totalGeral)}
               </strong>
             </div>
 
@@ -516,7 +523,7 @@ export default function SaidasPage() {
               <div>
                 <h3 className="text-xl font-black">Saídas cadastradas</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Histórico das despesas registradas neste navegador.
+                  Histórico das despesas do período selecionado, carregadas do Supabase com cache local.
                 </p>
               </div>
 
@@ -528,7 +535,7 @@ export default function SaidasPage() {
             {saidasOrdenadas.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
                 <p className="text-sm font-bold text-slate-700">
-                  Nenhuma saída cadastrada.
+                  Nenhuma saída encontrada no período selecionado.
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
                   Cadastre a primeira despesa para começar o controle.

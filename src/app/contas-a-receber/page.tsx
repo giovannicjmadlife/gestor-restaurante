@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   LS_CONTAS_RECEBER,
@@ -105,6 +109,8 @@ function formatarData(data: string) {
 export default function ContasAReceberPage() {
   const [contas, setContas] = useState<ContaReceber[]>([]);
   const [dadosCarregados, setDadosCarregados] = useState(false);
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
 
   const [data, setData] = useState(gerarDataHoje());
   const [origem, setOrigem] = useState("");
@@ -157,28 +163,32 @@ export default function ContasAReceberPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(contas));
   }, [contas, dadosCarregados]);
 
+  const contasFiltradas = useMemo(
+    () => contas.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [contas, dataInicial, dataFinal]
+  );
+
   const contasOrdenadas = useMemo(() => {
-    return [...contas].sort((a, b) => {
+    return [...contasFiltradas].sort((a, b) => {
       return new Date(a.data).getTime() - new Date(b.data).getTime();
     });
-  }, [contas]);
+  }, [contasFiltradas]);
 
   const resumo = useMemo(() => {
-    const totalRecebido = contas
+    const totalRecebido = contasFiltradas
       .filter((conta) => conta.status === "Recebido")
       .reduce((soma, conta) => soma + conta.valor, 0);
 
-    const totalPendente = contas
+    const totalPendente = contasFiltradas
       .filter((conta) => conta.status === "Pendente")
       .reduce((soma, conta) => soma + conta.valor, 0);
 
-    const totalAtrasado = contas
+    const totalAtrasado = contasFiltradas
       .filter((conta) => conta.status === "Atrasado")
       .reduce((soma, conta) => soma + conta.valor, 0);
 
     const totalAReceber = totalPendente + totalAtrasado;
-
-    const totalGeral = contas.reduce((soma, conta) => soma + conta.valor, 0);
+    const totalGeral = contasFiltradas.reduce((soma, conta) => soma + conta.valor, 0);
 
     return {
       totalRecebido,
@@ -186,13 +196,13 @@ export default function ContasAReceberPage() {
       totalAtrasado,
       totalAReceber,
       totalGeral,
-      quantidade: contas.length,
+      quantidade: contasFiltradas.length,
     };
-  }, [contas]);
+  }, [contasFiltradas]);
 
   const resumoPorCategoria = useMemo(() => {
     const totais = categoriasReceber.map((nome) => {
-      const total = contas
+      const total = contasFiltradas
         .filter((conta) => conta.categoria === nome && conta.status !== "Recebido")
         .reduce((soma, conta) => soma + conta.valor, 0);
 
@@ -203,7 +213,7 @@ export default function ContasAReceberPage() {
     });
 
     return totais;
-  }, [contas]);
+  }, [contasFiltradas]);
 
   function criarEntradaRecebida(conta: ContaReceber): EntradaRecebida {
     const agora = new Date().toISOString();
@@ -402,6 +412,15 @@ export default function ContasAReceberPage() {
               </div>
             </div>
           </div>
+
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros de contas a receber"
+            descricao={`Filtrando pela data prevista no período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
 
           <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -626,7 +645,7 @@ export default function ContasAReceberPage() {
                   Contas a receber cadastradas
                 </h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Histórico dos valores previstos para entrar.
+                  Histórico dos valores previstos no período selecionado.
                 </p>
               </div>
 
@@ -638,7 +657,7 @@ export default function ContasAReceberPage() {
             {contasOrdenadas.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
                 <p className="text-sm font-bold text-slate-700">
-                  Nenhuma conta a receber cadastrada.
+                  Nenhuma conta a receber encontrada no período selecionado.
                 </p>
                 <p className="mt-1 text-sm text-slate-500">
                   Cadastre o primeiro valor previsto para receber.

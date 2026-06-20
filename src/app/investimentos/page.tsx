@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { useEffect, useMemo, useState } from "react";
 import {
   LS_INVESTIMENTOS,
@@ -73,6 +77,8 @@ function criarId() {
 export default function InvestimentosPage() {
   const [investimentos, setInvestimentos] = useState<Investimento[]>([]);
   const [dadosCarregados, setDadosCarregados] = useState(false);
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
   const [data, setData] = useState(hojeISO());
   const [categoria, setCategoria] =
     useState<CategoriaInvestimento>("Equipamentos");
@@ -121,21 +127,26 @@ export default function InvestimentosPage() {
     salvarArrayLocalStorage(STORAGE_KEY, investimentos);
   }, [investimentos, dadosCarregados]);
 
+  const investimentosFiltrados = useMemo(
+    () => investimentos.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [investimentos, dataInicial, dataFinal]
+  );
+
   const resumo = useMemo(() => {
-    const totalGeral = investimentos.reduce(
+    const totalGeral = investimentosFiltrados.reduce(
       (acc, item) => acc + item.valor,
       0
     );
 
-    const totalPago = investimentos
+    const totalPago = investimentosFiltrados
       .filter((item) => item.status === "Pago")
       .reduce((acc, item) => acc + item.valor, 0);
 
-    const totalPendente = investimentos
+    const totalPendente = investimentosFiltrados
       .filter((item) => item.status === "Pendente")
       .reduce((acc, item) => acc + item.valor, 0);
 
-    const totalPlanejado = investimentos
+    const totalPlanejado = investimentosFiltrados
       .filter((item) => item.status === "Planejado")
       .reduce((acc, item) => acc + item.valor, 0);
 
@@ -144,14 +155,14 @@ export default function InvestimentosPage() {
       totalPago,
       totalPendente,
       totalPlanejado,
-      quantidade: investimentos.length,
+      quantidade: investimentosFiltrados.length,
     };
-  }, [investimentos]);
+  }, [investimentosFiltrados]);
 
   const resumoPorCategoria = useMemo(() => {
     return categorias
       .map((categoriaAtual) => {
-        const total = investimentos
+        const total = investimentosFiltrados
           .filter((item) => item.categoria === categoriaAtual)
           .reduce((acc, item) => acc + item.valor, 0);
 
@@ -161,7 +172,7 @@ export default function InvestimentosPage() {
         };
       })
       .filter((item) => item.total > 0);
-  }, [investimentos]);
+  }, [investimentosFiltrados]);
 
   function limparFormulario() {
     setData(hojeISO());
@@ -268,6 +279,15 @@ export default function InvestimentosPage() {
               investimentos estruturais do restaurante.
             </p>
           </div>
+
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros de investimentos"
+            descricao={`Os valores e investimentos mostram o período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
 
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -427,10 +447,10 @@ export default function InvestimentosPage() {
                   </p>
                 </div>
 
-                {investimentos.length === 0 ? (
+                {investimentosFiltrados.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center">
                     <p className="font-medium text-slate-700">
-                      Nenhum investimento cadastrado ainda.
+                      Nenhum investimento encontrado no período selecionado.
                     </p>
 
                     <p className="mt-1 text-sm text-slate-500">
@@ -454,7 +474,7 @@ export default function InvestimentosPage() {
                       </thead>
 
                       <tbody>
-                        {investimentos.map((item) => (
+                        {investimentosFiltrados.map((item) => (
                           <tr
                             key={item.id}
                             className="border-b border-slate-100 text-sm"

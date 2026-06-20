@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { useEffect, useMemo, useState } from "react";
 import {
   buscarFinanceiroSupabase,
@@ -164,6 +168,8 @@ export default function EntradasPage() {
   );
   const [taxasMaquininhas, setTaxasMaquininhas] = useState<TaxaCadastro[]>([]);
   const [taxasDelivery, setTaxasDelivery] = useState<TaxaCadastro[]>([]);
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
 
   const [data, setData] = useState(hojeISO());
   const [categoria, setCategoria] = useState("Almoço");
@@ -289,24 +295,30 @@ export default function EntradasPage() {
     };
   }, [valor, taxaSelecionada]);
 
-  const resumo = useMemo(() => {
-    const totalLiquido = entradas.reduce((acc, item) => acc + item.valor, 0);
+  const entradasFiltradas = useMemo(
+    () => entradas.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [entradas, dataInicial, dataFinal]
+  );
 
-    const totalBruto = entradas.reduce(
+  const exclusoesFiltradas = useMemo(
+    () => entradasExcluidas.filter((item) => dataNoPeriodo(item.entrada.data, dataInicial, dataFinal)),
+    [entradasExcluidas, dataInicial, dataFinal]
+  );
+
+  const resumo = useMemo(() => {
+    const totalLiquido = entradasFiltradas.reduce((acc, item) => acc + item.valor, 0);
+
+    const totalBruto = entradasFiltradas.reduce(
       (acc, item) => acc + (item.valorBruto ?? item.valor),
       0
     );
 
-    const totalTaxas = entradas.reduce(
+    const totalTaxas = entradasFiltradas.reduce(
       (acc, item) => acc + (item.valorTaxa ?? 0),
       0
     );
 
-    const entradasHoje = entradas
-      .filter((item) => item.data === hojeISO())
-      .reduce((acc, item) => acc + item.valor, 0);
-
-    const totalExcluido = entradasExcluidas.reduce(
+    const totalExcluido = exclusoesFiltradas.reduce(
       (acc, item) => acc + (item.entrada.valorBruto ?? item.entrada.valor),
       0
     );
@@ -315,17 +327,17 @@ export default function EntradasPage() {
       totalLiquido,
       totalBruto,
       totalTaxas,
-      entradasHoje,
-      quantidade: entradas.length,
-      exclusoes: entradasExcluidas.length,
+      mediaLancamento: entradasFiltradas.length > 0 ? totalLiquido / entradasFiltradas.length : 0,
+      quantidade: entradasFiltradas.length,
+      exclusoes: exclusoesFiltradas.length,
       totalExcluido,
     };
-  }, [entradas, entradasExcluidas]);
+  }, [entradasFiltradas, exclusoesFiltradas]);
 
   const resumoPorCategoria = useMemo(() => {
     return categorias
       .map((categoriaAtual) => {
-        const total = entradas
+        const total = entradasFiltradas
           .filter((item) => item.categoria === categoriaAtual)
           .reduce((acc, item) => acc + item.valor, 0);
 
@@ -335,7 +347,7 @@ export default function EntradasPage() {
         };
       })
       .filter((item) => item.total > 0);
-  }, [entradas]);
+  }, [entradasFiltradas]);
 
   function limparFormulario() {
     setData(hojeISO());
@@ -472,6 +484,15 @@ export default function EntradasPage() {
             </p>
           </div>
 
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros de entradas"
+            descricao={`Os cards, a lista e o resumo mostram o período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
+
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <p className="text-sm text-slate-500">Valor bruto</p>
@@ -495,9 +516,9 @@ export default function EntradasPage() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Entradas de hoje</p>
+              <p className="text-sm text-slate-500">Média por lançamento</p>
               <strong className="mt-2 block text-2xl text-blue-700">
-                {formatarMoeda(resumo.entradasHoje)}
+                {formatarMoeda(resumo.mediaLancamento)}
               </strong>
             </div>
 
@@ -699,10 +720,10 @@ export default function EntradasPage() {
                   </p>
                 </div>
 
-                {entradas.length === 0 ? (
+                {entradasFiltradas.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center">
                     <p className="font-medium text-slate-700">
-                      Nenhuma entrada cadastrada ainda.
+                      Nenhuma entrada encontrada no período selecionado.
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
                       Use o formulário ao lado para lançar a primeira entrada.
@@ -726,7 +747,7 @@ export default function EntradasPage() {
                       </thead>
 
                       <tbody>
-                        {entradas.map((item) => (
+                        {entradasFiltradas.map((item) => (
                           <tr
                             key={item.id}
                             className="border-b border-slate-100 text-sm"
@@ -821,7 +842,7 @@ export default function EntradasPage() {
                   </p>
                 </div>
 
-                {entradasExcluidas.length === 0 ? (
+                {exclusoesFiltradas.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-red-200 bg-red-50 p-8 text-center">
                     <p className="font-medium text-red-700">
                       Nenhuma entrada excluída.
@@ -843,7 +864,7 @@ export default function EntradasPage() {
                       </thead>
 
                       <tbody>
-                        {entradasExcluidas.map((item) => (
+                        {exclusoesFiltradas.map((item) => (
                           <tr
                             key={item.id}
                             className="border-b border-red-50 text-sm"

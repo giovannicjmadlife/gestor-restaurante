@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { useEffect, useMemo, useState } from "react";
 import {
   Colaborador,
@@ -148,6 +152,8 @@ function gerarFolhaMensal(colaboradores: Colaborador[], itensAtuais: FolhaItem[]
 export default function FolhaDePagamentoPage() {
   const [itens, setItens] = useState<FolhaItem[]>([]);
   const [dadosCarregados, setDadosCarregados] = useState(false);
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
   const [data, setData] = useState(hojeISO());
   const [nome, setNome] = useState("");
   const [funcao, setFuncao] = useState<FuncaoFuncionario>("Cozinha");
@@ -202,18 +208,23 @@ export default function FolhaDePagamentoPage() {
     salvarArrayLocalStorage(STORAGE_KEY, itens);
   }, [itens, dadosCarregados]);
 
-  const resumo = useMemo(() => {
-    const totalGeral = itens.reduce((acc, item) => acc + item.valor, 0);
+  const itensFiltrados = useMemo(
+    () => itens.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [itens, dataInicial, dataFinal]
+  );
 
-    const totalPago = itens
+  const resumo = useMemo(() => {
+    const totalGeral = itensFiltrados.reduce((acc, item) => acc + item.valor, 0);
+
+    const totalPago = itensFiltrados
       .filter((item) => item.status === "Pago")
       .reduce((acc, item) => acc + item.valor, 0);
 
-    const totalPendente = itens
+    const totalPendente = itensFiltrados
       .filter((item) => item.status === "Pendente")
       .reduce((acc, item) => acc + item.valor, 0);
 
-    const totalAtrasado = itens
+    const totalAtrasado = itensFiltrados
       .filter((item) => item.status === "Atrasado")
       .reduce((acc, item) => acc + item.valor, 0);
 
@@ -222,14 +233,14 @@ export default function FolhaDePagamentoPage() {
       totalPago,
       totalPendente,
       totalAtrasado,
-      quantidade: itens.length,
+      quantidade: itensFiltrados.length,
     };
-  }, [itens]);
+  }, [itensFiltrados]);
 
   const resumoPorFuncao = useMemo(() => {
     return funcoes
       .map((funcaoAtual) => {
-        const total = itens
+        const total = itensFiltrados
           .filter((item) => item.funcao === funcaoAtual)
           .reduce((acc, item) => acc + item.valor, 0);
 
@@ -239,7 +250,7 @@ export default function FolhaDePagamentoPage() {
         };
       })
       .filter((item) => item.total > 0);
-  }, [itens]);
+  }, [itensFiltrados]);
 
   function limparFormulario() {
     setData(hojeISO());
@@ -344,6 +355,15 @@ export default function FolhaDePagamentoPage() {
               pagamentos da equipe.
             </p>
           </div>
+
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros da folha de pagamento"
+            descricao={`Os valores e lançamentos mostram o período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
 
           <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -521,10 +541,10 @@ export default function FolhaDePagamentoPage() {
                   </div>
                 </div>
 
-                {itens.length === 0 ? (
+                {itensFiltrados.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center">
                     <p className="font-medium text-slate-700">
-                      Nenhum pagamento cadastrado ainda.
+                      Nenhum pagamento encontrado no período selecionado.
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
                       Use o formulário ao lado para lançar o primeiro pagamento.
@@ -546,7 +566,7 @@ export default function FolhaDePagamentoPage() {
                       </thead>
 
                       <tbody>
-                        {itens.map((item) => (
+                        {itensFiltrados.map((item) => (
                           <tr
                             key={item.id}
                             className="border-b border-slate-100 text-sm"

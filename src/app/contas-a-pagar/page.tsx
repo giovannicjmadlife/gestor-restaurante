@@ -1,6 +1,10 @@
 "use client";
 
 import AdminSidebar from "@/components/AdminSidebar";
+import FinancePeriodFilter, {
+  dataNoPeriodo,
+  descricaoPeriodo,
+} from "@/components/FinancePeriodFilter";
 import { useEffect, useMemo, useState } from "react";
 import {
   Colaborador,
@@ -99,6 +103,8 @@ export default function ContasAPagarPage() {
   const [saidas, setSaidas] = useState<RegistroFinanceiro[]>([]);
   const [folha, setFolha] = useState<RegistroFinanceiro[]>([]);
   const [erro, setErro] = useState("");
+  const [dataInicial, setDataInicial] = useState("");
+  const [dataFinal, setDataFinal] = useState("");
 
   useEffect(() => {
     let ativo = true;
@@ -164,20 +170,25 @@ export default function ContasAPagarPage() {
     return [...listaSaidas, ...listaFolha].sort((a, b) => new Date(a.data).getTime() - new Date(b.data).getTime());
   }, [saidas, folha]);
 
+  const contasFiltradas = useMemo(
+    () => contas.filter((item) => dataNoPeriodo(item.data, dataInicial, dataFinal)),
+    [contas, dataInicial, dataFinal]
+  );
+
   const resumo = useMemo(() => {
-    const totalPendente = contas.filter((conta) => conta.status === "Pendente").reduce((soma, conta) => soma + conta.valor, 0);
-    const totalVencido = contas.filter((conta) => conta.status === "Vencido" || conta.status === "Atrasado").reduce((soma, conta) => soma + conta.valor, 0);
-    const totalGeral = contas.reduce((soma, conta) => soma + conta.valor, 0);
-    return { totalPendente, totalVencido, totalGeral, quantidade: contas.length };
-  }, [contas]);
+    const totalPendente = contasFiltradas.filter((conta) => conta.status === "Pendente").reduce((soma, conta) => soma + conta.valor, 0);
+    const totalVencido = contasFiltradas.filter((conta) => conta.status === "Vencido" || conta.status === "Atrasado").reduce((soma, conta) => soma + conta.valor, 0);
+    const totalGeral = contasFiltradas.reduce((soma, conta) => soma + conta.valor, 0);
+    return { totalPendente, totalVencido, totalGeral, quantidade: contasFiltradas.length };
+  }, [contasFiltradas]);
 
   const resumoPorCategoria = useMemo(() => {
-    const totais = contas.reduce<Record<string, number>>((acc, conta) => {
+    const totais = contasFiltradas.reduce<Record<string, number>>((acc, conta) => {
       acc[conta.categoria] = (acc[conta.categoria] || 0) + conta.valor;
       return acc;
     }, {});
     return Object.entries(totais).map(([categoria, total]) => ({ categoria, total })).sort((a, b) => b.total - a.total);
-  }, [contas]);
+  }, [contasFiltradas]);
 
   async function marcarComoPago(conta: ContaPagarView) {
     const confirmar = window.confirm("Deseja marcar esta conta como paga? O valor sairá do saldo real.");
@@ -231,6 +242,15 @@ export default function ContasAPagarPage() {
             </div>
           </div>
 
+          <FinancePeriodFilter
+            dataInicial={dataInicial}
+            dataFinal={dataFinal}
+            onDataInicialChange={setDataInicial}
+            onDataFinalChange={setDataFinal}
+            titulo="Filtros de contas a pagar"
+            descricao={`Filtrando pela data de vencimento no período ${descricaoPeriodo(dataInicial, dataFinal)}.`}
+          />
+
           <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Card titulo="Total a pagar" valor={resumo.totalGeral} detalhe="Pendentes + vencidas" cor="text-red-700" />
             <Card titulo="Pendentes" valor={resumo.totalPendente} detalhe="Aguardando pagamento" cor="text-amber-700" />
@@ -249,9 +269,9 @@ export default function ContasAPagarPage() {
                 <p className="mt-1 text-sm text-slate-500">Saídas e folha de pagamento em aberto.</p>
               </div>
 
-              {contas.length === 0 ? (
+              {contasFiltradas.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
-                  <p className="text-sm font-bold text-slate-700">Nenhuma conta a pagar.</p>
+                  <p className="text-sm font-bold text-slate-700">Nenhuma conta a pagar no período selecionado.</p>
                   <p className="mt-1 text-sm text-slate-500">Cadastre uma saída/folha com status Pendente, Vencido ou Atrasado.</p>
                   <a href="/saidas" className="mt-5 inline-flex rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-orange-600">Cadastrar saída</a>
                 </div>
@@ -270,7 +290,7 @@ export default function ContasAPagarPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {contas.map((conta) => (
+                      {contasFiltradas.map((conta) => (
                         <tr key={`${conta.origem}-${conta.id}`} className="border-b border-slate-100 transition hover:bg-slate-50">
                           <td className="px-4 py-4 font-medium">{formatarData(conta.data)}</td>
                           <td className="px-4 py-4">{conta.origem === "folha" ? "Folha" : "Saída"}</td>
