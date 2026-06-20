@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { buscarProdutos, salvarProdutos } from "@/lib/produtosStorage";
 import { salvarVendaFinanceiroSupabase } from "@/lib/financeiroSupabase";
 
@@ -156,7 +156,7 @@ const LS_COMANDA_CONSUMOS = "gestor-restaurante-comanda-consumos";
 const LS_MESAS = "gestor-restaurante-mesas";
 const LS_COMANDAS = "gestor-restaurante-comandas";
 
-const CATEGORIAS_PDV = ["Almoço", "Janta", "Bebidas", "Sorvete", "Outros"];
+const CATEGORIAS_PDV = ["Almoço", "Janta", "Bebidas", "Sorvete", "Doces", "Picolé", "Outros"];
 const FORMAS_PAGAMENTO_BASE: FormaPagamentoBase[] = ["Dinheiro", "PIX", "Débito", "Crédito", "Correntista"];
 const FORMAS_PAGAMENTO_DIVIDIDO: FormaPagamentoBase[] = ["Dinheiro", "PIX", "Débito", "Crédito"];
 
@@ -235,6 +235,19 @@ function money(value: number) {
   });
 }
 
+function formatPesoPorQuiloInput(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  const numericValue = Number(digits || "0");
+
+  if (!Number.isFinite(numericValue)) return "0,000";
+
+  const inteiro = Math.floor(numericValue / 1000);
+  const decimal = String(numericValue % 1000).padStart(3, "0");
+
+  return `${inteiro.toLocaleString("pt-BR")},${decimal}`;
+}
+
+
 function todayInputDate() {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -263,6 +276,23 @@ function normalizeText(value: string) {
 }
 
 function calcularCategoriaPdv(categoriaNormalizada: string, grupoNormalizado: string) {
+  const categoriaExata = CATEGORIAS_PDV.find((categoria) => {
+    const categoriaBase = normalizeText(categoria);
+    return categoriaNormalizada === categoriaBase || grupoNormalizado === categoriaBase;
+  });
+
+  if (categoriaExata) {
+    return categoriaExata;
+  }
+
+  if (categoriaNormalizada.includes("doce") || grupoNormalizado.includes("doce")) {
+    return "Doces";
+  }
+
+  if (categoriaNormalizada.includes("picole") || grupoNormalizado.includes("picole")) {
+    return "Picolé";
+  }
+
   if (categoriaNormalizada.includes("almoco") || grupoNormalizado.includes("almoco")) {
     return "Almoço";
   }
@@ -288,6 +318,159 @@ function calcularCategoriaPdv(categoriaNormalizada: string, grupoNormalizado: st
   }
 
   return "Outros";
+}
+
+
+function produtoManualPdv(
+  id: string,
+  codigo: string,
+  nome: string,
+  valor: number,
+  categoria: "Doces" | "Picolé"
+): ProdutoRaw {
+  return {
+    id,
+    codigo,
+    nome,
+    categoriaPrincipal: categoria,
+    categoria,
+    grupo: categoria,
+    subgrupo: "",
+    opcao: "",
+    valor,
+    preco: valor,
+    precoVenda: valor,
+    ativo: true,
+    controlaEstoque: false,
+    criadoPorSistema: true,
+  };
+}
+
+const PRODUTOS_MANUAIS_PDV: ProdutoRaw[] = [
+  produtoManualPdv("pdv-doces-001", "DOC001", "Balinhas frutas", 0.15, "Doces"),
+  produtoManualPdv("pdv-doces-002", "DOC002", "BALINHA CARAMELO", 0.25, "Doces"),
+  produtoManualPdv("pdv-doces-003", "DOC003", "PIRULITO", 0.50, "Doces"),
+  produtoManualPdv("pdv-doces-004", "DOC004", "DOCE RICO", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-005", "DOC005", "Chiclete", 0.20, "Doces"),
+  produtoManualPdv("pdv-doces-006", "DOC006", "Baba de Bruxa", 0.50, "Doces"),
+  produtoManualPdv("pdv-doces-007", "DOC007", "Bala Freegells", 0.15, "Doces"),
+  produtoManualPdv("pdv-doces-008", "DOC008", "BIBS", 5.00, "Doces"),
+  produtoManualPdv("pdv-doces-009", "DOC009", "BUBBALOO", 0.50, "Doces"),
+  produtoManualPdv("pdv-doces-010", "DOC010", "Mentos Pure", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-011", "DOC011", "HALLS", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-012", "DOC012", "BALA DE MEL", 0.20, "Doces"),
+  produtoManualPdv("pdv-doces-013", "DOC013", "BOMBOM OREO", 2.50, "Doces"),
+  produtoManualPdv("pdv-doces-014", "DOC014", "BOMBOM OURO BRANCO", 2.50, "Doces"),
+  produtoManualPdv("pdv-doces-015", "DOC015", "BOMBOM SONHO DE VALSA", 2.50, "Doces"),
+  produtoManualPdv("pdv-doces-016", "DOC016", "TIC-TAC", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-017", "DOC017", "STIKADINHO", 5.00, "Doces"),
+  produtoManualPdv("pdv-doces-018", "DOC018", "GOIABADA", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-019", "DOC019", "DANNY BALL CHICLETE", 2.00, "Doces"),
+  produtoManualPdv("pdv-doces-020", "DOC020", "CASADINHO MEIO A MEIO", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-021", "DOC021", "COCADA MARINNA", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-022", "DOC022", "BALINHA 7 BELOS", 0.15, "Doces"),
+  produtoManualPdv("pdv-doces-023", "DOC023", "TRENTO", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-024", "DOC024", "PÉ DE MLK", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-025", "DOC025", "OREO", 4.00, "Doces"),
+  produtoManualPdv("pdv-doces-026", "DOC026", "Mentos Lata", 15.00, "Doces"),
+  produtoManualPdv("pdv-doces-027", "DOC027", "Mentos bala", 0.50, "Doces"),
+  produtoManualPdv("pdv-doces-028", "DOC028", "Azedinho", 3.00, "Doces"),
+  produtoManualPdv("pdv-doces-029", "DOC029", "Dadinho", 0.50, "Doces"),
+  produtoManualPdv("pdv-doces-030", "DOC030", "PLUTONITA PIRULITO", 3.50, "Doces"),
+  produtoManualPdv("pdv-doces-031", "DOC031", "PLUTONITA PÉ", 2.00, "Doces"),
+  produtoManualPdv("pdv-doces-032", "DOC032", "Tartuguita", 2.00, "Doces"),
+  produtoManualPdv("pdv-doces-033", "DOC033", "Bon o Bon", 2.00, "Doces"),
+  produtoManualPdv("pdv-doces-034", "DOC034", "FINI PEQUENO", 2.00, "Doces"),
+  produtoManualPdv("pdv-doces-035", "DOC035", "BomBom Avelã", 3.50, "Doces"),
+  produtoManualPdv("pdv-doces-036", "DOC036", "PIRULITO BIG BIG GRANDE", 1.00, "Doces"),
+  produtoManualPdv("pdv-doces-037", "DOC037", "DOCE DE LEITE IPANEMA G", 15.00, "Doces"),
+
+  produtoManualPdv("pdv-picole-001", "PIC001", "AÇAÍ COM LEITINHO", 12.50, "Picolé"),
+  produtoManualPdv("pdv-picole-002", "PIC002", "CONE BRIGADEIRO", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-003", "PIC003", "PIC UVA", 3.50, "Picolé"),
+  produtoManualPdv("pdv-picole-004", "PIC004", "SKIMO", 7.00, "Picolé"),
+  produtoManualPdv("pdv-picole-005", "PIC005", "VILELITO", 9.00, "Picolé"),
+  produtoManualPdv("pdv-picole-006", "PIC006", "BRIGADEIRO PREMIUM", 9.00, "Picolé"),
+  produtoManualPdv("pdv-picole-007", "PIC007", "ESTRELINHA", 5.00, "Picolé"),
+  produtoManualPdv("pdv-picole-008", "PIC008", "AÇAÍ COM WHEY", 30.00, "Picolé"),
+  produtoManualPdv("pdv-picole-009", "PIC009", "LIMÃO CREME", 6.50, "Picolé"),
+  produtoManualPdv("pdv-picole-010", "PIC010", "MORANGO CREME", 6.50, "Picolé"),
+  produtoManualPdv("pdv-picole-011", "PIC011", "SENSAÇÃO", 6.50, "Picolé"),
+  produtoManualPdv("pdv-picole-012", "PIC012", "CAJÁ", 5.00, "Picolé"),
+  produtoManualPdv("pdv-picole-013", "PIC013", "CHOCOLATE RETRO", 4.50, "Picolé"),
+  produtoManualPdv("pdv-picole-014", "PIC014", "COCO", 4.50, "Picolé"),
+  produtoManualPdv("pdv-picole-015", "PIC015", "CAFE PREMIUM", 8.00, "Picolé"),
+  produtoManualPdv("pdv-picole-016", "PIC016", "CHOCOLATE BLACK 70 PREMIUM", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-017", "PIC017", "COOKIES PREMIUM", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-018", "PIC018", "Sorvete Trufadinho 1,6l", 28.00, "Picolé"),
+  produtoManualPdv("pdv-picole-019", "PIC019", "SORVETE CREME DE AVELA", 30.00, "Picolé"),
+  produtoManualPdv("pdv-picole-020", "PIC020", "SORVETE FERRETI 1L", 30.00, "Picolé"),
+  produtoManualPdv("pdv-picole-021", "PIC021", "COPÃO TRUFADINHO", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-022", "PIC022", "NAPOLITANO PREMIUM", 7.00, "Picolé"),
+  produtoManualPdv("pdv-picole-023", "PIC023", "VILELINHA LEILINHA", 5.00, "Picolé"),
+  produtoManualPdv("pdv-picole-024", "PIC024", "CONE DE AÇAÍ", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-025", "PIC025", "SUPER BLACK", 9.00, "Picolé"),
+  produtoManualPdv("pdv-picole-026", "PIC026", "SORVETE ZERO", 26.00, "Picolé"),
+  produtoManualPdv("pdv-picole-027", "PIC027", "MARSHMALLOW CHICLETE", 5.00, "Picolé"),
+  produtoManualPdv("pdv-picole-028", "PIC028", "Chocolate trufado 1,5", 30.00, "Picolé"),
+  produtoManualPdv("pdv-picole-029", "PIC029", "Picolé Açaí Leitinho", 10.00, "Picolé"),
+  produtoManualPdv("pdv-picole-030", "PIC030", "Mousse Maracujá Sorvete 1,5L", 30.00, "Picolé"),
+  produtoManualPdv("pdv-picole-031", "PIC031", "SORVETE MORANGO COM BAUNILHA 1,5L", 28.00, "Picolé"),
+  produtoManualPdv("pdv-picole-032", "PIC032", "CLASSICO", 10.00, "Picolé"),
+];
+
+function chaveProdutoManualPdv(produto: ProdutoRaw) {
+  return normalizeText(asString(produto.nome) || asString(produto.descricao) || asString(produto.item));
+}
+
+function aplicarProdutosManuaisPdv(produtosOriginais: ProdutoRaw[]) {
+  const manuaisPorNome = new Map(
+    PRODUTOS_MANUAIS_PDV.map((produto) => [chaveProdutoManualPdv(produto), produto])
+  );
+
+  const encontrados = new Set<string>();
+  let alterado = false;
+
+  const produtos = produtosOriginais.map((produto) => {
+    const chave = chaveProdutoManualPdv(produto);
+    const manual = manuaisPorNome.get(chave);
+
+    if (!manual) {
+      return produto;
+    }
+
+    encontrados.add(chave);
+
+    const categoriaManual = asString(manual.categoria);
+    const categoriaAtual = asString(produto.categoriaPrincipal) || asString(produto.categoria);
+    const valorManual = asNumber(manual.valor);
+    const valorAtual = asNumber(produto.valor) || asNumber(produto.preco) || asNumber(produto.precoVenda);
+
+    if (
+      normalizeText(categoriaAtual) !== normalizeText(categoriaManual) ||
+      Math.abs(valorAtual - valorManual) > 0.001
+    ) {
+      alterado = true;
+    }
+
+    return {
+      ...produto,
+      ...manual,
+      id: asString(produto.id) || asString(manual.id),
+      codigo: asString(produto.codigo) || asString(manual.codigo),
+    };
+  });
+
+  for (const manual of PRODUTOS_MANUAIS_PDV) {
+    const chave = chaveProdutoManualPdv(manual);
+
+    if (!encontrados.has(chave)) {
+      produtos.push(manual);
+      alterado = true;
+    }
+  }
+
+  return { produtos, alterado };
 }
 
 function normalizarSubgrupoPizza(subgrupo: string, nome = "") {
@@ -582,6 +765,9 @@ export default function PdvPage() {
 
   const [cliente, setCliente] = useState("");
   const [mostrarPagamento, setMostrarPagamento] = useState(false);
+  const [finalizandoVenda, setFinalizandoVenda] = useState(false);
+  const finalizandoVendaRef = useRef(false);
+  const [vendaEmPagamentoId, setVendaEmPagamentoId] = useState("");
   const [formaPagamento, setFormaPagamento] =
     useState<FormaPagamento>("Dinheiro");
   const [valorRecebido, setValorRecebido] = useState("");
@@ -629,7 +815,15 @@ export default function PdvPage() {
 
       if (cancelado) return;
 
-      const produtosMapeados = produtosStorage
+      const resultadoManual = aplicarProdutosManuaisPdv(produtosStorage as ProdutoRaw[]);
+
+      if (resultadoManual.alterado) {
+        salvarProdutos(resultadoManual.produtos).catch((error) => {
+          console.error("Não foi possível salvar Doces e Picolé no Supabase.", error);
+        });
+      }
+
+      const produtosMapeados = resultadoManual.produtos
         .map((produto, index) => getProdutoView(produto as ProdutoRaw, index))
         .filter((produto) => produto.ativo);
 
@@ -806,6 +1000,10 @@ export default function PdvPage() {
   }, [produtos, categoriaSelecionada]);
 
   const gruposDisponiveis = useMemo(() => {
+    if (categoriaSelecionada === "Doces" || categoriaSelecionada === "Picolé") {
+      return [];
+    }
+
     const lista = produtosDoCardPrincipal
       .map((produto) => produto.grupo.trim())
       .filter(Boolean);
@@ -815,7 +1013,7 @@ export default function PdvPage() {
       if (b === "Pizza") return 1;
       return a.localeCompare(b, "pt-BR");
     });
-  }, [produtosDoCardPrincipal]);
+  }, [produtosDoCardPrincipal, categoriaSelecionada]);
 
   const produtosDoGrupoSelecionado = useMemo(() => {
     if (!grupoSelecionado) {
@@ -1136,7 +1334,6 @@ export default function PdvPage() {
     setMostrarAberturaCaixa(false);
     setValorAbertura("");
 
-    alert("Caixa aberto com sucesso.");
   }
 
   function adicionarProdutoMeiaPizza(produto: ProdutoView) {
@@ -1213,7 +1410,7 @@ export default function PdvPage() {
     if (produto.porQuilo) {
       setPesoModal({
         produto,
-        peso: "",
+        peso: "0,000",
       });
       return;
     }
@@ -1394,6 +1591,7 @@ export default function PdvPage() {
       return;
     }
 
+    setVendaEmPagamentoId((idAtual) => idAtual || uid());
     setMostrarPagamento(true);
   }
 
@@ -1505,7 +1703,6 @@ export default function PdvPage() {
         JSON.stringify([novoConsumo, ...consumosSemEstaMesa])
       );
 
-      alert(`Consumo lançado na mesa ${atendimentoAtual.mesaNumero}.`);
       window.location.href = "/pdv/mesa";
       return;
     }
@@ -1552,7 +1749,6 @@ export default function PdvPage() {
         JSON.stringify([novoConsumo, ...consumosSemEstaComanda])
       );
 
-      alert(`Consumo lançado na comanda ${novoConsumo.comandaNome}.`);
       window.location.href = "/pdv/comanda";
     }
   }
@@ -1635,268 +1831,294 @@ export default function PdvPage() {
   }
 
   async function finalizarVenda() {
-    if (!caixaAtual || caixaAtual.status !== "Aberto") {
-      alert("Abra o caixa antes de finalizar a venda.");
-      setMostrarPagamento(false);
-      setMostrarAberturaCaixa(true);
+    if (finalizandoVendaRef.current) {
       return;
     }
 
-    if (carrinho.length === 0) {
-      alert("Adicione pelo menos um item antes de finalizar.");
-      return;
-    }
+    finalizandoVendaRef.current = true;
+    setFinalizandoVenda(true);
 
-    if (formaPagamento === "Dinheiro") {
-      const recebido = asNumber(valorRecebido);
-
-      if (recebido < valorCobrar) {
-        alert("O valor recebido em dinheiro é menor que o valor a cobrar.");
-        return;
-      }
-    }
-
-    if (formaPagamento === "Correntista" && !correntistaSelecionado) {
-      alert("Selecione o correntista antes de finalizar a venda por conta.");
-      return;
-    }
-
-    if (formaPagamento === "Dividido") {
-      if (pagamentosCalculados.length < 2) {
-        alert("Para rachar a conta, informe pelo menos duas formas de pagamento.");
+    try {
+      if (!caixaAtual || caixaAtual.status !== "Aberto") {
+        alert("Abra o caixa antes de finalizar a venda.");
+        setMostrarPagamento(false);
+        setMostrarAberturaCaixa(true);
         return;
       }
 
-      if (Math.abs(diferencaPagamentoDividido) > 0.01) {
-        alert(
-          `A soma dos pagamentos precisa fechar exatamente o valor a cobrar.
+      if (carrinho.length === 0) {
+        alert("Adicione pelo menos um item antes de finalizar.");
+        return;
+      }
+
+      if (formaPagamento === "Dinheiro") {
+        const recebido = asNumber(valorRecebido);
+
+        if (recebido < valorCobrar) {
+          alert("O valor recebido em dinheiro é menor que o valor a cobrar.");
+          return;
+        }
+      }
+
+      if (formaPagamento === "Correntista" && !correntistaSelecionado) {
+        alert("Selecione o correntista antes de finalizar a venda por conta.");
+        return;
+      }
+
+      if (formaPagamento === "Dividido") {
+        if (pagamentosCalculados.length < 2) {
+          alert("Para rachar a conta, informe pelo menos duas formas de pagamento.");
+          return;
+        }
+
+        if (Math.abs(diferencaPagamentoDividido) > 0.01) {
+          alert(
+            `A soma dos pagamentos precisa fechar exatamente o valor a cobrar.
 
 Valor a cobrar: ${money(
-            valorCobrar
-          )}
+              valorCobrar
+            )}
 Informado: ${money(totalPagamentosDivididos)}
 Falta/sobra: ${money(
-            diferencaPagamentoDividido
-          )}`
-        );
-        return;
-      }
-    }
-
-    const vendaId = uid();
-    const agora = new Date();
-    const pagamentosVenda = pagamentosCalculados.map((pagamento) => ({
-      ...pagamento,
-      id: uid(),
-    }));
-    const formaRecebimentoFinal =
-      formaPagamento === "Dividido" ? "Dividido" : formaPagamento;
-    const formaDetalhada = descricaoPagamentos(pagamentosVenda);
-
-    const descricaoItens = carrinho
-      .map((item) => `${item.quantidade} ${item.unidade} - ${item.nome}`)
-      .join(" | ");
-
-    const dadosColaborador = colaboradorSelecionado
-      ? {
-          colaboradorId: colaboradorSelecionado.id,
-          colaboradorNome: colaboradorSelecionado.nome,
-          colaboradorPercentual: asNumber(colaboradorSelecionado.percentualComissao),
+              diferencaPagamentoDividido
+            )}`
+          );
+          return;
         }
-      : {
-          colaboradorId: "",
-          colaboradorNome: "",
-          colaboradorPercentual: 0,
-        };
+      }
 
-    const entradasAtuais = safeJsonArray<ProdutoRaw>(
-      localStorage.getItem(LS_ENTRADAS)
-    );
+      const vendaId = vendaEmPagamentoId || uid();
+      const agora = new Date();
+      const pagamentosVenda = pagamentosCalculados.map((pagamento, index) => ({
+        ...pagamento,
+        id: pagamento.id || `${vendaId}-pagamento-${index}`,
+      }));
+      const formaRecebimentoFinal =
+        formaPagamento === "Dividido" ? "Dividido" : formaPagamento;
+      const formaDetalhada = descricaoPagamentos(pagamentosVenda);
 
-    const novaEntrada = {
-      id: vendaId,
-      caixaId: caixaAtual.id,
-      atendimentoTipo: tipoAtendimento,
-      mesaId: atendimentoAtual?.mesaId || "",
-      mesaNumero: atendimentoAtual?.mesaNumero || "",
-      comandaId: atendimentoAtual?.comandaId || "",
-      comandaNome: atendimentoAtual?.comandaNome || "",
-      data: todayInputDate(),
-      categoria:
-        tipoAtendimento === "Mesa"
-          ? "Venda Mesa"
-          : tipoAtendimento === "Comanda"
-          ? "Venda Comanda"
-          : tipoAtendimento === "Delivery"
-          ? "Venda Delivery"
-          : "Venda PDV",
-      descricao:
-        tipoAtendimento === "Mesa"
-          ? `Venda Mesa ${atendimentoAtual?.mesaNumero} - ${descricaoItens}`
-          : tipoAtendimento === "Comanda"
-          ? `Venda Comanda ${atendimentoAtual?.comandaNome || ""} - ${descricaoItens}`
-          : tipoAtendimento === "Delivery"
-          ? `Venda Delivery - ${descricaoItens}`
-          : `Venda PDV - ${descricaoItens}`,
-      formaRecebimento: formaRecebimentoFinal,
-      formaPagamento: formaRecebimentoFinal,
-      forma: formaRecebimentoFinal,
-      formaPagamentoDetalhada: formaDetalhada,
-      pagamentos: pagamentosVenda,
-      valorOriginal: totalBruto,
-      subtotalItens: totalBruto,
-      descontoValor: descontoNumerico,
-      valorBruto: valorCobrar,
-      valorCobrado: valorCobrar,
-      taxaPercentual,
-      taxaMaquininhaDescontada: valorTaxaPagamentos,
-      taxaDeliveryDescontada: valorTaxaDelivery,
-      taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
-      taxaEntregaValor,
-      taxaDescontada: valorTaxa,
-      valorLiquido,
-      valor: valorLiquido,
-      origem: "PDV",
-      cliente: consumidorVenda,
-      operador: caixaAtual.operador,
-      ...dadosColaborador,
-      criadoEm: agora.toISOString(),
-    };
+      const descricaoItens = carrinho
+        .map((item) => `${item.quantidade} ${item.unidade} - ${item.nome}`)
+        .join(" | ");
 
-    localStorage.setItem(
-      LS_ENTRADAS,
-      JSON.stringify([novaEntrada, ...entradasAtuais])
-    );
+      const dadosColaborador = colaboradorSelecionado
+        ? {
+            colaboradorId: colaboradorSelecionado.id,
+            colaboradorNome: colaboradorSelecionado.nome,
+            colaboradorPercentual: asNumber(colaboradorSelecionado.percentualComissao),
+          }
+        : {
+            colaboradorId: "",
+            colaboradorNome: "",
+            colaboradorPercentual: 0,
+          };
 
-    const vendasAtuais = safeJsonArray<ProdutoRaw>(
-      localStorage.getItem(LS_VENDAS_DETALHADAS)
-    );
-
-    const novaVendaDetalhada = {
-      id: vendaId,
-      caixaId: caixaAtual.id,
-      atendimentoTipo: tipoAtendimento,
-      mesaId: atendimentoAtual?.mesaId || "",
-      mesaNumero: atendimentoAtual?.mesaNumero || "",
-      comandaId: atendimentoAtual?.comandaId || "",
-      comandaNome: atendimentoAtual?.comandaNome || "",
-      data: todayInputDate(),
-      dataHora: agora.toISOString(),
-      operador: caixaAtual.operador,
-      tipoVenda: tipoAtendimento,
-      status: "Finalizado",
-      tipoDocumento: "Gerencial",
-      consumidor: consumidorVenda,
-      formaPagamento: formaRecebimentoFinal,
-      formaPagamentoDetalhada: formaDetalhada,
-      pagamentos: pagamentosVenda,
-      totalItens,
-      valorOriginal: totalBruto,
-      subtotalItens: totalBruto,
-      descontoValor: descontoNumerico,
-      valorBruto: valorCobrar,
-      valorCobrado: valorCobrar,
-      taxaPercentual,
-      taxaMaquininhaDescontada: valorTaxaPagamentos,
-      taxaDeliveryDescontada: valorTaxaDelivery,
-      taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
-      taxaEntregaValor,
-      taxaDescontada: valorTaxa,
-      valorLiquido,
-      valor: valorLiquido,
-      itens: carrinho,
-      ...dadosColaborador,
-    };
-
-    localStorage.setItem(
-      LS_VENDAS_DETALHADAS,
-      JSON.stringify([novaVendaDetalhada, ...vendasAtuais])
-    );
-
-    let novaContaReceber: ProdutoRaw | null = null;
-
-    if (formaPagamento === "Correntista" && correntistaSelecionado) {
-      const contasAtuais = safeJsonArray<ProdutoRaw>(
-        localStorage.getItem(LS_CONTAS_RECEBER)
+      const entradasAtuais = safeJsonArray<ProdutoRaw>(
+        localStorage.getItem(LS_ENTRADAS)
       );
 
-      novaContaReceber = {
-        id: uid(),
-        vendaId,
+      const novaEntrada = {
+        id: vendaId,
+        caixaId: caixaAtual.id,
+        atendimentoTipo: tipoAtendimento,
+        mesaId: atendimentoAtual?.mesaId || "",
+        mesaNumero: atendimentoAtual?.mesaNumero || "",
+        comandaId: atendimentoAtual?.comandaId || "",
+        comandaNome: atendimentoAtual?.comandaNome || "",
         data: todayInputDate(),
-        cliente: correntistaSelecionado.nome,
-        correntistaId: correntistaSelecionado.id,
-        categoria: "Correntista",
-        formaPrevista: "Correntista",
-        descricao: `Venda PDV por conta - ${descricaoItens}`,
-        status: "Pendente",
-        valor: valorCobrar,
+        categoria:
+          tipoAtendimento === "Mesa"
+            ? "Venda Mesa"
+            : tipoAtendimento === "Comanda"
+            ? "Venda Comanda"
+            : tipoAtendimento === "Delivery"
+            ? "Venda Delivery"
+            : "Venda PDV",
+        descricao:
+          tipoAtendimento === "Mesa"
+            ? `Venda Mesa ${atendimentoAtual?.mesaNumero} - ${descricaoItens}`
+            : tipoAtendimento === "Comanda"
+            ? `Venda Comanda ${atendimentoAtual?.comandaNome || ""} - ${descricaoItens}`
+            : tipoAtendimento === "Delivery"
+            ? `Venda Delivery - ${descricaoItens}`
+            : `Venda PDV - ${descricaoItens}`,
+        formaRecebimento: formaRecebimentoFinal,
+        formaPagamento: formaRecebimentoFinal,
+        forma: formaRecebimentoFinal,
+        formaPagamentoDetalhada: formaDetalhada,
+        pagamentos: pagamentosVenda,
         valorOriginal: totalBruto,
+        subtotalItens: totalBruto,
         descontoValor: descontoNumerico,
+        valorBruto: valorCobrar,
+        valorCobrado: valorCobrar,
+        taxaPercentual,
+        taxaMaquininhaDescontada: valorTaxaPagamentos,
+        taxaDeliveryDescontada: valorTaxaDelivery,
+        taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
+        taxaEntregaValor,
+        taxaDescontada: valorTaxa,
+        valorLiquido,
+        valor: valorLiquido,
+        origem: "PDV",
+        cliente: consumidorVenda,
+        operador: caixaAtual.operador,
+        ...dadosColaborador,
         criadoEm: agora.toISOString(),
       };
 
       localStorage.setItem(
-        LS_CONTAS_RECEBER,
-        JSON.stringify([novaContaReceber, ...contasAtuais])
+        LS_ENTRADAS,
+        JSON.stringify([
+          novaEntrada,
+          ...entradasAtuais.filter((entrada) => String(entrada.id) !== vendaId),
+        ])
       );
 
-      const correntistasAtuais = safeJsonArray<Correntista>(
-        localStorage.getItem(LS_CORRENTISTAS)
+      const vendasAtuais = safeJsonArray<ProdutoRaw>(
+        localStorage.getItem(LS_VENDAS_DETALHADAS)
       );
 
-      const correntistasAtualizados = correntistasAtuais.map((correntista) => {
-        if (correntista.id !== correntistaSelecionado.id) return correntista;
-
-        return {
-          ...correntista,
-          saldoAberto: asNumber(correntista.saldoAberto) + valorCobrar,
-          atualizadoEm: agora.toISOString(),
-        };
-      });
+      const novaVendaDetalhada = {
+        id: vendaId,
+        caixaId: caixaAtual.id,
+        atendimentoTipo: tipoAtendimento,
+        mesaId: atendimentoAtual?.mesaId || "",
+        mesaNumero: atendimentoAtual?.mesaNumero || "",
+        comandaId: atendimentoAtual?.comandaId || "",
+        comandaNome: atendimentoAtual?.comandaNome || "",
+        data: todayInputDate(),
+        dataHora: agora.toISOString(),
+        operador: caixaAtual.operador,
+        tipoVenda: tipoAtendimento,
+        status: "Finalizado",
+        tipoDocumento: "Gerencial",
+        consumidor: consumidorVenda,
+        formaPagamento: formaRecebimentoFinal,
+        formaPagamentoDetalhada: formaDetalhada,
+        pagamentos: pagamentosVenda,
+        totalItens,
+        valorOriginal: totalBruto,
+        subtotalItens: totalBruto,
+        descontoValor: descontoNumerico,
+        valorBruto: valorCobrar,
+        valorCobrado: valorCobrar,
+        taxaPercentual,
+        taxaMaquininhaDescontada: valorTaxaPagamentos,
+        taxaDeliveryDescontada: valorTaxaDelivery,
+        taxaDeliveryNome: asString(taxaDeliveryAtiva?.nome || ""),
+        taxaEntregaValor,
+        taxaDescontada: valorTaxa,
+        valorLiquido,
+        valor: valorLiquido,
+        itens: carrinho,
+        ...dadosColaborador,
+      };
 
       localStorage.setItem(
-        LS_CORRENTISTAS,
-        JSON.stringify(correntistasAtualizados)
+        LS_VENDAS_DETALHADAS,
+        JSON.stringify([
+          novaVendaDetalhada,
+          ...vendasAtuais.filter((venda) => String(venda.id) !== vendaId),
+        ])
       );
-    }
 
-    try {
-      await salvarVendaFinanceiroSupabase({
-        entrada: novaEntrada,
-        vendaDetalhada: novaVendaDetalhada,
-        contaReceber: novaContaReceber,
+      let novaContaReceber: ProdutoRaw | null = null;
+
+      if (formaPagamento === "Correntista" && correntistaSelecionado) {
+        const contasAtuais = safeJsonArray<ProdutoRaw>(
+          localStorage.getItem(LS_CONTAS_RECEBER)
+        );
+
+        novaContaReceber = {
+          id: `${vendaId}-conta-receber`,
+          vendaId,
+          data: todayInputDate(),
+          cliente: correntistaSelecionado.nome,
+          correntistaId: correntistaSelecionado.id,
+          categoria: "Correntista",
+          formaPrevista: "Correntista",
+          descricao: `Venda PDV por conta - ${descricaoItens}`,
+          status: "Pendente",
+          valor: valorCobrar,
+          valorOriginal: totalBruto,
+          descontoValor: descontoNumerico,
+          criadoEm: agora.toISOString(),
+        };
+
+        localStorage.setItem(
+          LS_CONTAS_RECEBER,
+          JSON.stringify([
+            novaContaReceber,
+            ...contasAtuais.filter(
+              (conta) =>
+                String(conta.id) !== String(novaContaReceber?.id) &&
+                String(conta.vendaId || "") !== vendaId
+            ),
+          ])
+        );
+
+        const correntistasAtuais = safeJsonArray<Correntista>(
+          localStorage.getItem(LS_CORRENTISTAS)
+        );
+
+        const correntistasAtualizados = correntistasAtuais.map((correntista) => {
+          if (correntista.id !== correntistaSelecionado.id) return correntista;
+
+          return {
+            ...correntista,
+            saldoAberto: asNumber(correntista.saldoAberto) + valorCobrar,
+            atualizadoEm: agora.toISOString(),
+          };
+        });
+
+        localStorage.setItem(
+          LS_CORRENTISTAS,
+          JSON.stringify(correntistasAtualizados)
+        );
+      }
+
+      try {
+        await salvarVendaFinanceiroSupabase({
+          entrada: novaEntrada,
+          vendaDetalhada: novaVendaDetalhada,
+          contaReceber: novaContaReceber,
+        });
+      } catch (error) {
+        console.error("Venda salva localmente, mas não foi enviada ao Supabase.", error);
+        alert("A venda foi finalizada neste caixa, mas não foi enviada ao Supabase. Verifique conexão, variáveis da Vercel e se o SQL do patch já foi executado.");
+      }
+
+      await baixarEstoqueDosProdutos();
+      removerConsumoDepoisDoPagamento();
+
+      setCarrinho([]);
+      setPrimeiraMetadePizza(null);
+      setCliente("");
+      setValorRecebido("");
+      setDescontoReais("");
+      setCorrentistaSelecionadoId("");
+      setColaboradorSelecionadoId("");
+      setPagamentosDivididos({
+        Dinheiro: "",
+        PIX: "",
+        Débito: "",
+        Crédito: "",
+        Correntista: "",
       });
-    } catch (error) {
-      console.error("Venda salva localmente, mas não foi enviada ao Supabase.", error);
-      alert("A venda foi finalizada neste caixa, mas não foi enviada ao Supabase. Verifique conexão, variáveis da Vercel e se o SQL do patch já foi executado.");
+      setFormaPagamento("Dinheiro");
+      setMostrarPagamento(false);
+      setVendaEmPagamentoId("");
+
+      localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
+      setAtendimentoAtual(null);
+
+    } finally {
+      finalizandoVendaRef.current = false;
+      setFinalizandoVenda(false);
     }
-
-    await baixarEstoqueDosProdutos();
-    removerConsumoDepoisDoPagamento();
-
-    setCarrinho([]);
-    setPrimeiraMetadePizza(null);
-    setCliente("");
-    setValorRecebido("");
-    setDescontoReais("");
-    setCorrentistaSelecionadoId("");
-    setColaboradorSelecionadoId("");
-    setPagamentosDivididos({
-      Dinheiro: "",
-      PIX: "",
-      Débito: "",
-      Crédito: "",
-      Correntista: "",
-    });
-    setFormaPagamento("Dinheiro");
-    setMostrarPagamento(false);
-
-    localStorage.removeItem(LS_ATENDIMENTO_ATUAL);
-    setAtendimentoAtual(null);
-
-    alert("Venda finalizada com sucesso.");
   }
+
 
 
   function gerarHtmlContaAtual() {
@@ -3040,10 +3262,17 @@ Falta/sobra: ${money(
 
             <input
               autoFocus
+              inputMode="numeric"
               value={pesoModal.peso}
+              onFocus={(event) => event.currentTarget.select()}
               onChange={(event) =>
                 setPesoModal((atual) =>
-                  atual ? { ...atual, peso: event.target.value } : atual
+                  atual
+                    ? {
+                        ...atual,
+                        peso: formatPesoPorQuiloInput(event.target.value),
+                      }
+                    : atual
                 )
               }
               onKeyDown={(event) => {
@@ -3309,10 +3538,16 @@ Falta/sobra: ${money(
             </p>
 
             <button
+              type="button"
               onClick={finalizarVenda}
-              className="mt-5 w-full rounded-xl bg-[#f97316] py-4 text-lg font-black uppercase text-white hover:bg-[#ea580c]"
+              disabled={finalizandoVenda}
+              className={`mt-5 w-full rounded-xl py-4 text-lg font-black uppercase text-white ${
+                finalizandoVenda
+                  ? "cursor-not-allowed bg-slate-400"
+                  : "bg-[#f97316] hover:bg-[#ea580c]"
+              }`}
             >
-              Finalizar venda
+              {finalizandoVenda ? "Finalizando..." : "Finalizar venda"}
             </button>
           </div>
         </div>
